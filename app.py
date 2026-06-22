@@ -135,9 +135,9 @@ def load_polygon_file(uploaded_poly):
             return None
     return None
 
-# ==================== BUILD MAP (MULTI-CRS SUPPORT + YELLOW HIGHLIGHT) ====================
+# ==================== BUILD MAP (NO HIGHLIGHT) ====================
 def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radius, polygon_points, 
-              transformer_global, unit, zoom_mode=False, highlighted_well=None, 
+              transformer_global, unit, zoom_mode=False, 
               well_col='Well', x_col='x', y_col='y', epsg_col=None):
     
     m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_start, tiles=None, control_scale=True)
@@ -171,7 +171,7 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
     folium.Circle(location=[center_lat, center_lon], radius=search_radius, color='red', 
                   weight=2, fill=False, popup=f"Radius: {search_radius} {get_unit_label(unit)}").add_to(m)
     
-    # ----- Wells Loop (With Multi-CRS Support) -----
+    # ----- Wells Loop -----
     for idx, row in df.iterrows():
         well_name = row[well_col]
         
@@ -194,9 +194,6 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
         if well_name == selected_well:
             color = 'red'
             icon_type = 'info-sign'
-        elif highlighted_well and well_name == highlighted_well:
-            color = 'yellow'
-            icon_type = 'star'
         elif dist_m <= search_radius:
             color = 'blue'
             icon_type = 'ok-sign'
@@ -234,11 +231,10 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
                 box-shadow: 0 4px 12px rgba(0,0,0,0.15);
                 color: {text_color}; line-height: 1.8; backdrop-filter: blur(4px);">
         <b style="font-size:13px;">📍 Legend</b><br>
-        <span style="color: #ef4444;">●</span> Selected (Main)<br>
-        <span style="color: #eab308;">⭐</span> Highlighted (From Table)<br>
-        <span style="color: #3b82f6;">●</span> Nearby Well<br>
-        <span style="color: #94a3b8;">●</span> Other Well<br>
-        <span style="color: #22c55e; border: 1px solid #22c55e; padding: 0px 10px;">▬</span> Boundary
+        <span style="color: #ef4444;">●</span> Selected Well (Main)<br>
+        <span style="color: #3b82f6;">●</span> Nearby Well (within radius)<br>
+        <span style="color: #94a3b8;">●</span> Other Well (outside radius)<br>
+        <span style="color: #22c55e; border: 1px solid #22c55e; padding: 0px 10px;">▬</span> Boundary Polygon
     </div>
     '''
     m.get_root().html.add_child(folium.Element(legend_html))
@@ -251,8 +247,6 @@ if 'df' not in st.session_state:
     st.session_state.df = None
 if 'polygon_points' not in st.session_state:
     st.session_state.polygon_points = None
-if 'highlighted_well' not in st.session_state:
-    st.session_state.highlighted_well = None
 
 # ==================== SIDEBAR ====================
 with st.sidebar:
@@ -394,50 +388,22 @@ if df is not None and not df.empty:
             st.markdown("---")
             
             # ============================================================
-            # ===== NEW: TABLE WITH HIGHLIGHT CHECKBOX INSIDE =====
+            # ===== SIMPLE TABLE (NO HIGHLIGHT, NO RERUN) =====
             # ============================================================
-            st.markdown("#### 📋 Nearby Wells Table (Check the box to highlight on map)")
+            st.markdown("#### 📋 Nearby Wells Table")
             if not nearby_df.empty:
                 display_cols = [well_col, x_col, y_col, f'Distance ({unit_label})']
                 extra_cols = [c for c in df_temp.columns if c not in [well_col, x_col, y_col, 'distance']]
                 display_cols.extend(extra_cols)
                 
-                display_df = nearby_df[display_cols].copy()
-                display_df["Highlight on Map"] = False
-                
-                edited_df = st.data_editor(
-                    display_df,
-                    column_config={
-                        "Highlight on Map": st.column_config.CheckboxColumn(
-                            "⭐ Highlight",
-                            default=False,
-                            help="Check this box to highlight the well in YELLOW on the map"
-                        )
-                    },
-                    disabled=[col for col in display_df.columns if col != "Highlight on Map"],
+                st.dataframe(
+                    nearby_df[display_cols].style.format({f'Distance ({unit_label})': '{:.3f}'}),
                     use_container_width=True,
-                    height=300,
-                    key="highlight_table_editor"
+                    height=350
                 )
-                
-                # Update highlighted well based on checkbox without rerunning infinitely
-                if not edited_df.empty:
-                    highlighted_rows = edited_df[edited_df["Highlight on Map"] == True]
-                    new_highlight = highlighted_rows.iloc[0][well_col] if not highlighted_rows.empty else None
-                    
-                    if st.session_state.highlighted_well != new_highlight:
-                        st.session_state.highlighted_well = new_highlight
-                        st.rerun()  # Rerun only to update the map with the new highlight
-                
-                if st.session_state.highlighted_well:
-                    st.success(f"⭐ Highlighted on map: **{st.session_state.highlighted_well}** (Yellow Star)")
-                else:
-                    st.info("ℹ️ No well selected for highlight. Check a box above to highlight it in YELLOW.")
             else:
                 st.warning("⚠️ No other wells found within the specified radius.")
             
-            # ============================================================
-            # ===== END OF TABLE MODIFICATION =====
             # ============================================================
             
             transformer_global = get_transformer(source_epsg)
@@ -481,7 +447,6 @@ if df is not None and not df.empty:
                 transformer_global=transformer_global,
                 unit=distance_unit,
                 zoom_mode=False,
-                highlighted_well=st.session_state.highlighted_well,
                 well_col=well_col,
                 x_col=x_col,
                 y_col=y_col,
@@ -507,7 +472,6 @@ if df is not None and not df.empty:
                     transformer_global=transformer_global,
                     unit=distance_unit,
                     zoom_mode=True,
-                    highlighted_well=st.session_state.highlighted_well,
                     well_col=well_col,
                     x_col=x_col,
                     y_col=y_col,
@@ -536,26 +500,42 @@ if df is not None and not df.empty:
         else:
             st.info("👈 Select a well and settings from the sidebar, then click 'Find Nearby Wells'.")
     
+    # ================================================================
+    # ==================== TAB 2: DATA MANAGEMENT (WITH SAVE BUTTON) ====================
+    # ================================================================
     with tab2:
         st.markdown("### 📊 All Wells Data (Editable)")
-        st.caption("Add new rows, edit existing data, or delete rows. Changes are saved in memory until you reload.")
+        st.caption("✏️ Edit cells freely below. Click **'💾 Save Changes'** to apply all modifications at once.")
         
         if st.session_state.df is not None:
-            edited_df = st.data_editor(
-                st.session_state.df,
-                num_rows="dynamic",
-                use_container_width=True,
-                height=500,
-                column_config={
-                    "Well": st.column_config.TextColumn("Well Name", required=True),
-                    "x": st.column_config.NumberColumn("X Coordinate", format="%.2f"),
-                    "y": st.column_config.NumberColumn("Y Coordinate", format="%.2f"),
-                }
-            )
-            st.session_state.df = edited_df
-            st.success(f"✅ Total wells: {len(edited_df)}")
+            # استخدام st.form لمنع إعادة التشغيل أثناء التعديل
+            with st.form(key="data_edit_form"):
+                edited_df = st.data_editor(
+                    st.session_state.df,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    height=500,
+                    column_config={
+                        "Well": st.column_config.TextColumn("Well Name", required=True),
+                        "x": st.column_config.NumberColumn("X Coordinate", format="%.2f"),
+                        "y": st.column_config.NumberColumn("Y Coordinate", format="%.2f"),
+                    }
+                )
+                
+                # زر الحفظ داخل الفورم (لن يعيد التشغيل إلا عند الضغط عليه)
+                submitted = st.form_submit_button("💾 Save Changes to Memory", use_container_width=True, type="primary")
             
-            csv_full = edited_df.to_csv(index=False).encode('utf-8')
+            # إذا تم الضغط على زر الحفظ
+            if submitted:
+                st.session_state.df = edited_df
+                st.success(f"✅ Data saved successfully! Total wells: {len(edited_df)}")
+                st.rerun()  # نعيد التشغيل مرة واحدة لتحديث باقي التطبيق بالبيانات الجديدة
+            
+            # عرض العدد الحالي للبيانات (حتى لو لم يتم الحفظ بعد)
+            st.info(f"📌 Current total wells in memory: {len(st.session_state.df)}")
+            
+            # تحميل الملف الكامل (دائماً من البيانات المحفوظة في الجلسة)
+            csv_full = st.session_state.df.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Download Full Dataset as CSV", data=csv_full, file_name='all_wells_data.csv', mime='text/csv')
         else:
             st.warning("No data loaded. Please upload a file in the sidebar.")
