@@ -54,20 +54,29 @@ def utm_to_latlng(transformer, x, y):
 
 # ==================== UNIT CONVERSION ====================
 def format_distance(dist_m, unit):
-    if unit == "Kilometers (km)":
+    if "Kilometers" in unit:
         return dist_m / 1000.0
-    elif unit == "Feet (ft)":
+    elif "Feet" in unit:
         return dist_m * 3.28084
     else:  # Meters
         return dist_m
 
 def get_unit_label(unit):
-    if unit == "Kilometers (km)":
+    if "Kilometers" in unit:
         return "km"
-    elif unit == "Feet (ft)":
+    elif "Feet" in unit:
         return "ft"
     else:
         return "m"
+
+def get_measure_units(unit):
+    """Return primary and secondary units for MeasureControl based on user selection"""
+    if "Kilometers" in unit:
+        return "kilometers", "meters"
+    elif "Feet" in unit:
+        return "feet", "meters"
+    else:  # Meters
+        return "meters", "kilometers"
 
 # ==================== DATA LOADING ====================
 @st.cache_data
@@ -136,23 +145,24 @@ def load_polygon_file(uploaded_poly):
             return None
     return None
 
-# ==================== BUILD MAP FUNCTION (FULL FEATURES) ====================
+# ==================== BUILD MAP FUNCTION (UPDATED) ====================
 def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radius, polygon_points, transformer, unit, zoom_mode=False):
     
     # Base map
     m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_start, tiles=None, control_scale=True)
     
     # ===== 1. TILE LAYERS (Multiple Views) =====
-    folium.TileLayer('OpenStreetMap', name='🗺️ Street Map (with Grid)', show=True).add_to(m)
-    folium.TileLayer('OpenTopoMap', name='🏔️ Topographic (with Grid)', show=False).add_to(m)
+    folium.TileLayer('OpenStreetMap', name='🗺️ Street Map', show=True).add_to(m)
+    folium.TileLayer('OpenTopoMap', name='🏔️ Topographic', show=False).add_to(m)
     folium.TileLayer('CartoDB positron', name='🌐 Light Simple', show=False).add_to(m)
     folium.TileLayer('CartoDB dark_matter', name='🌑 Dark Simple', show=False).add_to(m)
     
-    # ===== 2. MEASURE TOOL (Ruler) =====
+    # ===== 2. MEASURE TOOL (Ruler) with Dynamic Units =====
+    primary, secondary = get_measure_units(unit)
     MeasureControl(
         position='topright',
-        primary_length_unit='meters',
-        secondary_length_unit='kilometers',
+        primary_length_unit=primary,
+        secondary_length_unit=secondary,
         active_color='red',
         completed_color='#ff0000'
     ).add_to(m)
@@ -224,17 +234,24 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
             icon=folium.Icon(color=color, icon=icon_type, prefix='glyphicon')
         ).add_to(m)
     
-    # ===== 6. LEGEND (Custom HTML on map) =====
+    # ===== 6. LEGEND (SMALLER - UPDATED) =====
+    # Smaller font and padding
+    bg_color = '#1a1d23' if st.session_state.get('theme', 'Light') == 'Dark' else 'white'
+    text_color = 'white' if st.session_state.get('theme', 'Light') == 'Dark' else 'black'
+    border_color = '#444' if st.session_state.get('theme', 'Light') == 'Dark' else '#ccc'
+    
     legend_html = f'''
-    <div style="position: fixed; bottom: 40px; left: 40px; z-index: 1000; background: {'#1a1d23' if st.session_state.get('theme', 'Light') == 'Dark' else 'white'}; 
-                padding: 12px 16px; border-radius: 8px; border: 2px solid {'#444' if st.session_state.get('theme', 'Light') == 'Dark' else '#ccc'}; 
-                font-size: 14px; font-family: Arial; box-shadow: 2px 2px 10px rgba(0,0,0,0.3);
-                color: {'white' if st.session_state.get('theme', 'Light') == 'Dark' else 'black'};">
+    <div style="position: fixed; bottom: 30px; left: 30px; z-index: 1000; 
+                background: {bg_color}; padding: 6px 10px; 
+                border-radius: 6px; border: 1px solid {border_color}; 
+                font-size: 11px; font-family: Arial; 
+                box-shadow: 1px 1px 6px rgba(0,0,0,0.2);
+                color: {text_color}; line-height: 1.5;">
         <b>📍 Legend</b><br>
         <span style="color: red;">●</span> Selected Well<br>
-        <span style="color: blue;">●</span> Nearby Well (within radius)<br>
-        <span style="color: gray;">●</span> Other Well (outside radius)<br>
-        <span style="color: green; border: 1px solid green; padding: 0px 10px;">▬</span> Boundary Polygon
+        <span style="color: blue;">●</span> Nearby Well<br>
+        <span style="color: gray;">●</span> Other Well<br>
+        <span style="color: green; border: 1px solid green; padding: 0px 8px;">▬</span> Boundary
     </div>
     '''
     m.get_root().html.add_child(folium.Element(legend_html))
@@ -250,7 +267,7 @@ with st.sidebar:
     
     # Theme
     theme_choice = st.radio("🎨 Theme", ["Light", "Dark"], index=0)
-    st.session_state['theme'] = theme_choice  # Store for legend
+    st.session_state['theme'] = theme_choice
     apply_theme(theme_choice)
     
     st.markdown("---")
@@ -292,13 +309,14 @@ with st.sidebar:
     st.caption(f"🔄 Converting from EPSG:{source_epsg} to WGS84")
     st.markdown("---")
     
-    # Distance Unit
+    # ===== DISTANCE UNIT SELECTION =====
     st.subheader("📏 Distance Unit")
     distance_unit = st.selectbox(
-        "Select unit for display:",
+        "Select unit for display & ruler:",
         ["Meters (m)", "Kilometers (km)", "Feet (ft)"],
         index=0
     )
+    st.caption("✨ Changes table, tooltips, AND the ruler tool.")
     
     st.markdown("---")
     
@@ -331,16 +349,13 @@ if df is not None and not df.empty and search_clicked:
     sel_x = selected_row['x'].values[0]
     sel_y = selected_row['y'].values[0]
     
-    # Calculate distances (always in meters)
     df['distance'] = np.sqrt((df['x'] - sel_x)**2 + (df['y'] - sel_y)**2)
     nearby_df = df[df['distance'] <= search_radius_m].copy()
     nearby_df = nearby_df.sort_values('distance').reset_index(drop=True)
     
-    # Add formatted distance column based on selected unit
     unit_label = get_unit_label(distance_unit)
     nearby_df[f'Distance ({unit_label})'] = nearby_df['distance'].apply(lambda d: format_distance(d, distance_unit))
     
-    # Stats
     st.markdown(f"### ✅ Results for Well **{selected_well}**")
     col1, col2, col3 = st.columns(3)
     col1.metric("Nearby Wells", len(nearby_df))
@@ -352,7 +367,6 @@ if df is not None and not df.empty and search_clicked:
         col2.metric("Closest Well", "-")
         col3.metric("Closest Distance", "-")
     
-    # ===== TABLE WITH SEARCH & FILTER (using st.dataframe) =====
     st.markdown("#### 📋 Nearby Wells Table (Searchable & Filterable)")
     if not nearby_df.empty:
         display_cols = ['Well', 'x', 'y', f'Distance ({unit_label})']
@@ -364,7 +378,6 @@ if df is not None and not df.empty and search_clicked:
     else:
         st.warning("No wells found within radius.")
     
-    # ===== COORDINATE TRANSFORMATION =====
     transformer = get_transformer(source_epsg)
     if transformer is None:
         st.stop()
@@ -384,8 +397,8 @@ if df is not None and not df.empty and search_clicked:
     center_lat = df[df['Well'] == selected_well]['lat'].values[0]
     center_lon = df[df['Well'] == selected_well]['lon'].values[0]
     
-    # ===== MAP 1: General View =====
     st.markdown("#### 🗺️ General Map (All Wells)")
+    st.caption("🖱️ Hover over wells for details. 🧭 Click the ruler icon (top-right) to measure distances. ☰ Click layers icon to change map style.")
     m1 = build_map(
         center_lat=center_lat,
         center_lon=center_lon,
@@ -400,7 +413,6 @@ if df is not None and not df.empty and search_clicked:
     )
     st_folium(m1, width=1200, height=500, returned_objects=[])
     
-    # ===== MAP 2: Zoom View =====
     st.markdown("#### 🔍 Zoom View (Selected + Nearby Wells Only)")
     nearby_wells = df[df['distance'] <= search_radius_m].copy()
     if selected_well not in nearby_wells['Well'].values:
@@ -425,35 +437,19 @@ if df is not None and not df.empty and search_clicked:
     else:
         st.info("No nearby wells to zoom in on.")
     
-    # ===== DOWNLOAD RESULTS =====
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
         if not nearby_df.empty:
             csv = nearby_df[['Well', 'x', 'y', f'Distance ({unit_label})']].to_csv(index=False).encode('utf-8')
-            st.download_button(
-                "📥 Download Results CSV",
-                data=csv,
-                file_name='nearest_wells.csv',
-                mime='text/csv',
-                use_container_width=True
-            )
+            st.download_button("📥 Download Results CSV", data=csv, file_name='nearest_wells.csv', mime='text/csv', use_container_width=True)
     
     with col_dl2:
-        # ===== EXPORT MAP AS HTML =====
-        # Create a temporary HTML file for the general map
         if 'm1' in locals():
             html_path = tempfile.NamedTemporaryFile(delete=False, suffix='.html').name
             m1.save(html_path)
             with open(html_path, 'r', encoding='utf-8') as f:
                 html_data = f.read()
-            st.download_button(
-                "🗺️ Export Map as HTML",
-                data=html_data,
-                file_name='wells_map.html',
-                mime='text/html',
-                use_container_width=True
-            )
-            # Clean up temp file
+            st.download_button("🗺️ Export Map as HTML", data=html_data, file_name='wells_map.html', mime='text/html', use_container_width=True)
             try:
                 os.unlink(html_path)
             except:
@@ -464,4 +460,4 @@ else:
         st.info("👈 Select a well, set Y Offset if needed, then click 'Find Nearby Wells'.")
 
 st.markdown("---")
-st.caption("🔒 Local app. Data never leaves your machine. | 🖱️ Hover over wells for details. | 🧭 Use the ruler (top-right) to measure distances.")
+st.caption("🔒 Local app. Data never leaves your machine. | 🖱️ Hover wells for details. | 🧭 Ruler + 4 map styles in top-right corner.")
