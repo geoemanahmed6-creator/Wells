@@ -158,7 +158,6 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
     if polygon_points:
         try:
             for x, y in polygon_points:
-                # Use global transformer for polygon (assuming same CRS as main data)
                 lat, lon = utm_to_latlng(transformer_global, x, y)
                 if lat is not None and lon is not None:
                     poly_latlng.append([lat, lon])
@@ -176,31 +175,27 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
     for idx, row in df.iterrows():
         well_name = row[well_col]
         
-        # Determine which transformer to use for this well
         if epsg_col and epsg_col in df.columns and pd.notna(row[epsg_col]):
             epsg_code = int(row[epsg_col])
             transformer = get_transformer(epsg_code)
             if transformer is None:
-                continue  # Skip if invalid CRS
+                continue
         else:
             transformer = transformer_global
         
-        # Convert coordinates
         lat, lon = utm_to_latlng(transformer, row[x_col], row[y_col])
         if lat is None or lon is None:
             continue
         
-        # Calculate distance (if selected well exists)
         dist_m = row.get('distance', 0)
         dist_formatted = format_distance(dist_m, unit)
         dist_label = get_unit_label(unit)
         
-        # Determine color
         if well_name == selected_well:
             color = 'red'
             icon_type = 'info-sign'
         elif highlighted_well and well_name == highlighted_well:
-            color = 'yellow'  # Highlighted in yellow
+            color = 'yellow'
             icon_type = 'star'
         elif dist_m <= search_radius:
             color = 'blue'
@@ -211,7 +206,6 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
             color = 'gray'
             icon_type = 'minus-sign'
         
-        # Tooltip with all data
         tooltip_text = f"<b>Well:</b> {well_name}<br>"
         for col in df.columns:
             if col not in [well_col, x_col, y_col, 'distance', 'lat', 'lon']:
@@ -278,7 +272,6 @@ with st.sidebar:
         if df is not None:
             st.session_state.df = df
     elif st.session_state.df is None:
-        # Load sample data if no file uploaded
         sample = pd.DataFrame({
             'Well': ['WD-013', 'WD-068', 'WD-061'],
             'x': [8863112.854, 8863308.970, 8863274.206],
@@ -299,12 +292,10 @@ with st.sidebar:
         st.markdown("---")
         st.subheader("📋 Column Mapping")
         
-        # Column selection
         well_col = st.selectbox("Well Name Column", df.columns, index=list(df.columns).index('Well') if 'Well' in df.columns else 0)
         x_col = st.selectbox("X Coordinate Column", df.columns, index=list(df.columns).index('x') if 'x' in df.columns else 0)
         y_col = st.selectbox("Y Coordinate Column", df.columns, index=list(df.columns).index('y') if 'y' in df.columns else 1)
         
-        # Check for EPSG column (for multi-CRS support)
         epsg_col = None
         if 'EPSG' in df.columns or 'epsg' in df.columns:
             epsg_options = [c for c in df.columns if c.lower() == 'epsg']
@@ -318,13 +309,10 @@ with st.sidebar:
         y_shift = st.number_input("➕ Y Offset (meters)", value=0.0, step=100000.0, format="%f")
         if y_shift != 0:
             st.success(f"✅ Y increased by {y_shift:,.0f} m")
-            # Apply shift to the dataframe
             df[y_col] = df[y_col] + y_shift
             st.session_state.df = df
         
         st.markdown("---")
-        
-        # Global CRS (used if no EPSG column)
         crs_options = {
             "WGS 84 / UTM Zone 36N (EPSG:32636)": 32636,
             "WGS 84 / UTM Zone 37N (EPSG:32637)": 32637,
@@ -358,16 +346,12 @@ with st.sidebar:
 
 # ==================== MAIN CONTENT (TABS) ====================
 if df is not None and not df.empty:
-    # Create Tabs
     tab1, tab2 = st.tabs(["🗺️ Map & Search", "📊 Data Management"])
     
-    # ==================== TAB 1: MAP & SEARCH ====================
     with tab1:
         if search_clicked:
-            # Prepare data
             df_temp = df.copy()
             
-            # Ensure numeric columns
             df_temp[x_col] = clean_numeric_column(df_temp[x_col])
             df_temp[y_col] = clean_numeric_column(df_temp[y_col])
             df_temp = df_temp.dropna(subset=[x_col, y_col])
@@ -376,7 +360,6 @@ if df is not None and not df.empty:
                 st.error("No valid numeric coordinates found.")
                 st.stop()
             
-            # Get selected well coordinates
             selected_row = df_temp[df_temp[well_col] == selected_well]
             if selected_row.empty:
                 st.error("Selected well not found!")
@@ -385,17 +368,13 @@ if df is not None and not df.empty:
             sel_x = selected_row[x_col].values[0]
             sel_y = selected_row[y_col].values[0]
             
-            # Calculate distances
             df_temp['distance'] = np.sqrt((df_temp[x_col] - sel_x)**2 + (df_temp[y_col] - sel_y)**2)
-            
-            # Exclude the selected well itself
             nearby_df = df_temp[(df_temp['distance'] <= search_radius_m) & (df_temp[well_col] != selected_well)].copy()
             nearby_df = nearby_df.sort_values('distance').reset_index(drop=True)
             
             unit_label = get_unit_label(distance_unit)
             nearby_df[f'Distance ({unit_label})'] = nearby_df['distance'].apply(lambda d: format_distance(d, distance_unit))
             
-            # Stats
             st.markdown(f"### 🎯 Results for Well **{selected_well}**")
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -414,48 +393,58 @@ if df is not None and not df.empty:
             
             st.markdown("---")
             
-            # ===== TABLE WITH HIGHLIGHT BUTTON =====
-            st.markdown("#### 📋 Nearby Wells Table (Click 🔍 to highlight on map)")
+            # ============================================================
+            # ===== NEW: TABLE WITH HIGHLIGHT CHECKBOX INSIDE =====
+            # ============================================================
+            st.markdown("#### 📋 Nearby Wells Table (Check the box to highlight on map)")
             if not nearby_df.empty:
-                # Add a button column
                 display_cols = [well_col, x_col, y_col, f'Distance ({unit_label})']
-                # Add extra columns if they exist (like Production_Rate)
                 extra_cols = [c for c in df_temp.columns if c not in [well_col, x_col, y_col, 'distance']]
                 display_cols.extend(extra_cols)
                 
-                # Create a copy for display
                 display_df = nearby_df[display_cols].copy()
+                display_df["Highlight on Map"] = False
                 
-                # Add the highlight button column
-                highlight_buttons = []
-                for idx, row in nearby_df.iterrows():
-                    well_name = row[well_col]
-                    if st.button(f"🔍 {well_name}", key=f"highlight_{idx}"):
-                        st.session_state.highlighted_well = well_name
-                        st.rerun()
-                    highlight_buttons.append(f"🔍 {well_name}")
-                
-                # Display table without the button column (we use buttons above)
-                st.dataframe(
-                    display_df.style.format({f'Distance ({unit_label})': '{:.3f}'}),
+                edited_df = st.data_editor(
+                    display_df,
+                    column_config={
+                        "Highlight on Map": st.column_config.CheckboxColumn(
+                            "⭐ Highlight",
+                            default=False,
+                            help="Check this box to highlight the well in YELLOW on the map"
+                        )
+                    },
+                    disabled=[col for col in display_df.columns if col != "Highlight on Map"],
                     use_container_width=True,
-                    height=300
+                    height=300,
+                    key="highlight_table_editor"
                 )
                 
-                # Show currently highlighted well
+                # Update highlighted well based on checkbox without rerunning infinitely
+                if not edited_df.empty:
+                    highlighted_rows = edited_df[edited_df["Highlight on Map"] == True]
+                    new_highlight = highlighted_rows.iloc[0][well_col] if not highlighted_rows.empty else None
+                    
+                    if st.session_state.highlighted_well != new_highlight:
+                        st.session_state.highlighted_well = new_highlight
+                        st.rerun()  # Rerun only to update the map with the new highlight
+                
                 if st.session_state.highlighted_well:
-                    st.success(f"⭐ Highlighted on map: **{st.session_state.highlighted_well}**")
+                    st.success(f"⭐ Highlighted on map: **{st.session_state.highlighted_well}** (Yellow Star)")
+                else:
+                    st.info("ℹ️ No well selected for highlight. Check a box above to highlight it in YELLOW.")
             else:
                 st.warning("⚠️ No other wells found within the specified radius.")
             
-            # ===== COORDINATE TRANSFORMATION =====
-            # Global transformer
+            # ============================================================
+            # ===== END OF TABLE MODIFICATION =====
+            # ============================================================
+            
             transformer_global = get_transformer(source_epsg)
             if transformer_global is None:
                 st.error("Invalid global CRS.")
                 st.stop()
             
-            # Convert all wells to lat/lon (using per-well EPSG if available)
             def convert_row(row):
                 if epsg_col and epsg_col in row and pd.notna(row[epsg_col]):
                     epsg = int(row[epsg_col])
@@ -478,7 +467,6 @@ if df is not None and not df.empty:
             center_lat = df_temp[df_temp[well_col] == selected_well]['lat'].values[0]
             center_lon = df_temp[df_temp[well_col] == selected_well]['lon'].values[0]
             
-            # ===== MAP 1: GENERAL VIEW =====
             st.markdown("#### 🗺️ General Map (All Wells)")
             st.caption("🖱️ Hover wells for details. 🧭 Use ruler (top-right) to measure. ☰ Layers to change style.")
             
@@ -501,7 +489,6 @@ if df is not None and not df.empty:
             )
             folium_static(m1, width=1200, height=550)
             
-            # ===== MAP 2: ZOOM VIEW =====
             st.markdown("#### 🔍 Zoom View (Selected + Nearby Wells)")
             nearby_wells = df_temp[(df_temp['distance'] <= search_radius_m) & (df_temp[well_col] != selected_well)].copy()
             nearby_wells = pd.concat([nearby_wells, df_temp[df_temp[well_col] == selected_well]])
@@ -530,7 +517,6 @@ if df is not None and not df.empty:
             else:
                 st.info("ℹ️ No nearby wells to zoom in on.")
             
-            # ===== DOWNLOAD =====
             st.markdown("---")
             col_dl1, col_dl2 = st.columns(2)
             with col_dl1:
@@ -550,13 +536,11 @@ if df is not None and not df.empty:
         else:
             st.info("👈 Select a well and settings from the sidebar, then click 'Find Nearby Wells'.")
     
-    # ==================== TAB 2: DATA MANAGEMENT ====================
     with tab2:
         st.markdown("### 📊 All Wells Data (Editable)")
         st.caption("Add new rows, edit existing data, or delete rows. Changes are saved in memory until you reload.")
         
         if st.session_state.df is not None:
-            # Display editable dataframe
             edited_df = st.data_editor(
                 st.session_state.df,
                 num_rows="dynamic",
@@ -568,13 +552,9 @@ if df is not None and not df.empty:
                     "y": st.column_config.NumberColumn("Y Coordinate", format="%.2f"),
                 }
             )
-            
-            # Save changes back to session state
             st.session_state.df = edited_df
-            
             st.success(f"✅ Total wells: {len(edited_df)}")
             
-            # Download full dataset
             csv_full = edited_df.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Download Full Dataset as CSV", data=csv_full, file_name='all_wells_data.csv', mime='text/csv')
         else:
@@ -583,6 +563,5 @@ if df is not None and not df.empty:
 else:
     st.warning("Please upload a valid file in the sidebar.")
 
-# ==================== FOOTER ====================
 st.markdown("---")
 st.caption("🔒 Local app. Data never leaves your machine. | 🖱️ Hover wells for details. | 🧭 Ruler + 4 map styles in top-right corner.")
