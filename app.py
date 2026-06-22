@@ -247,11 +247,16 @@ if 'df' not in st.session_state:
     st.session_state.df = None
 if 'polygon_points' not in st.session_state:
     st.session_state.polygon_points = None
+if 'search_data' not in st.session_state:
+    st.session_state.search_data = None
+if 'search_active' not in st.session_state:
+    st.session_state.search_active = False
 
 # ==================== SIDEBAR ====================
 with st.sidebar:
     st.markdown("## ⚙️ Settings")
     
+    # Theme (هذا الـ Widget سيسبب Rerun، ولكننا سنعرض النتائج المخزنة في session_state)
     theme_choice = st.radio("🎨 Theme", ["Light", "Dark"], index=0)
     st.session_state['theme'] = theme_choice
     apply_theme(theme_choice)
@@ -265,6 +270,7 @@ with st.sidebar:
         df = load_wells_file(uploaded_file)
         if df is not None:
             st.session_state.df = df
+            st.session_state.search_active = False  # إلغاء نتائج البحث السابقة عند رفع ملف جديد
     elif st.session_state.df is None:
         sample = pd.DataFrame({
             'Well': ['WD-013', 'WD-068', 'WD-061'],
@@ -305,6 +311,7 @@ with st.sidebar:
             st.success(f"✅ Y increased by {y_shift:,.0f} m")
             df[y_col] = df[y_col] + y_shift
             st.session_state.df = df
+            st.session_state.search_active = False  # إلغاء النتائج عند تغيير الإحداثيات
         
         st.markdown("---")
         crs_options = {
@@ -334,6 +341,10 @@ with st.sidebar:
         selected_well = st.selectbox("🟢 Select a Well", well_list, index=0)
         search_radius_m = st.number_input("📏 Search Radius (m)", min_value=0.0, value=500.0, step=50.0)
         search_clicked = st.button("🔍 Find Nearby Wells", use_container_width=True, type="primary")
+        
+        # إذا تم الضغط على زر البحث، نلغي التخزين المؤقت للبحث السابق لنحسب الجديد
+        if search_clicked:
+            st.session_state.search_active = False
     else:
         st.warning("Please upload a valid file.")
         st.stop()
@@ -343,32 +354,124 @@ if df is not None and not df.empty:
     tab1, tab2 = st.tabs(["🗺️ Map & Search", "📊 Data Management"])
     
     with tab1:
+        # ================================================================
+        # 1. حالة البحث الجديد (تم الضغط على الزر)
+        # ================================================================
         if search_clicked:
+            # --- تنفيذ العمليات الحسابية الثقيلة ---
             df_temp = df.copy()
             
             df_temp[x_col] = clean_numeric_column(df_temp[x_col])
             df_temp[y_col] = clean_numeric_column(df_temp[y_col])
             df_temp = df_temp.dropna(subset=[x_col, y_col])
             
-            if df_temp.empty:
+            if not df_temp.empty:
+                selected_row = df_temp[df_temp[well_col] == selected_well]
+                if not selected_row.empty:
+                    sel_x = selected_row[x_col].values[0]
+                    sel_y = selected_row[y_col].values[0]
+                    
+                    df_temp['distance'] = np.sqrt((df_temp[x_col] - sel_x)**2 + (df_temp[y_col] - sel_y)**2)
+                    nearby_df = df_temp[(df_temp['distance'] <= search_radius_m) & (df_temp[well_col] != selected_well)].copy()
+                    nearby_df = nearby_df.sort_values('distance').reset_index(drop=True)
+                    
+                    unit_label = get_unit_label(distance_unit)
+                    nearby_df[f'Distance ({unit_label})'] = nearby_df['distance'].apply(lambda d: format_distance(d, distance_unit))
+                    
+                    extra_cols = [c for c in df_temp.columns if c not in [well_col, x_col, y_col, 'distance']]
+                    
+                    # تحويل الإحداثيات للخريطة
+                    transformer_global = get_transformer(source_epsg)
+                    if transformer_global is not None:
+                        def convert_row(row):
+                            if epsg_col and epsg_col in row and pd.notna(row[epsg_col]):
+                                epsg = int(row[epsg_col])
+                                transformer = get_transformer(epsg)
+                                if transformer is None:
+                                    return pd.Series([None, None], index=['lat', 'lon'])
+                            else:
+                                transformer = transformer_global
+                            lat, lon = utm_to_latlng(transformer, row[x_col], row[y_col])
+                            return pd.Series([lat, lon], index=['lat', 'lon'])
+                        
+                        df_latlng = df_temp.apply(convert_row, axis=1)
+                        df_temp = pd.concat([df_temp, df_latlng], axis=1)
+                        df_temp = df_temp.dropna(subset=['lat', 'lon'])
+                        
+                        if not df_temp.empty:
+                            center_lat = df_temp[df_temp[well_col] == selected_well]['lat'].values[0]
+                            center_lon = df_temp[df_temp[well_col] == selected_well]['lon'].values[0]
+                            
+                            # بناء الخرائط
+                            m1 = build_map(
+                                center_lat=center_lat, center_lon=center_lon, zoom_start=12,
+                                df=df_temp, selected_well=selected_well, search_radius=search_radius_m,
+                                polygon_points=polygon_points, transformer_global=transformer_global,
+                                unit=distance_unit, zoom_mode=False,
+                                well_col=well_col, x_col=x_col, y_col=y_col, epsg_col=epsg_col
+                            )
+                            
+                            nearby_wells = df_temp[(df_temp['distance'] <= search_radius_m) & (df_temp[well_col] != selected_well)].copy()
+                            nearby_wells = pd.concat([nearby_wells, df_temp[df_temp[well_col] == selected_well]])
+                            m2 = None
+                            if not nearby_wells.empty:
+                                center_lat_zoom = nearby_wells['lat'].mean()
+                                center_lon_zoom = nearby_wells['lon'].mean()
+                                m2 = build_map(
+                                    center_lat=center_lat_zoom, center_lon=center_lon_zoom, zoom_start=14,
+                                    df=nearby_wells, selected_well=selected_well, search_radius=search_radius_m,
+                                    polygon_points=polygon_points, transformer_global=transformer_global,
+                                    unit=distance_unit, zoom_mode=True,
+                                    well_col=well_col, x_col=x_col, y_col=y_col, epsg_col=epsg_col
+                                )
+                            
+                            # تخزين كل النتائج في Session State
+                            st.session_state.search_data = {
+                                'df_temp': df_temp,
+                                'nearby_df': nearby_df,
+                                'extra_cols': extra_cols,
+                                'm1': m1,
+                                'm2': m2,
+                                'selected_well': selected_well,
+                                'distance_unit': distance_unit,
+                                'unit_label': unit_label,
+                                'search_radius_m': search_radius_m,
+                                'well_col': well_col,
+                                'x_col': x_col,
+                                'y_col': y_col,
+                                'source_epsg': source_epsg,
+                                'polygon_points': polygon_points,
+                                'epsg_col': epsg_col
+                            }
+                            st.session_state.search_active = True
+                        else:
+                            st.error("Conversion failed for all wells. Check CRS or Y Offset.")
+                    else:
+                        st.error("Invalid global CRS.")
+                else:
+                    st.error("Selected well not found!")
+            else:
                 st.error("No valid numeric coordinates found.")
-                st.stop()
+        
+        # ================================================================
+        # 2. عرض النتائج (إما من البحث الجديد أو من التخزين المؤقت)
+        # ================================================================
+        if st.session_state.search_active and st.session_state.search_data is not None:
+            data = st.session_state.search_data
+            df_temp = data['df_temp']
+            nearby_df = data['nearby_df']
+            extra_cols = data['extra_cols']
+            m1 = data['m1']
+            m2 = data['m2']
+            selected_well = data['selected_well']
+            distance_unit = data['distance_unit']
+            unit_label = data['unit_label']
+            search_radius_m = data['search_radius_m']
+            well_col = data['well_col']
+            x_col = data['x_col']
+            y_col = data['y_col']
             
-            selected_row = df_temp[df_temp[well_col] == selected_well]
-            if selected_row.empty:
-                st.error("Selected well not found!")
-                st.stop()
-            
-            sel_x = selected_row[x_col].values[0]
-            sel_y = selected_row[y_col].values[0]
-            
-            df_temp['distance'] = np.sqrt((df_temp[x_col] - sel_x)**2 + (df_temp[y_col] - sel_y)**2)
-            nearby_df = df_temp[(df_temp['distance'] <= search_radius_m) & (df_temp[well_col] != selected_well)].copy()
-            nearby_df = nearby_df.sort_values('distance').reset_index(drop=True)
-            
-            unit_label = get_unit_label(distance_unit)
-            nearby_df[f'Distance ({unit_label})'] = nearby_df['distance'].apply(lambda d: format_distance(d, distance_unit))
-            
+            # عرض الإحصائيات
             st.markdown(f"### 🎯 Results for Well **{selected_well}**")
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -387,15 +490,11 @@ if df is not None and not df.empty:
             
             st.markdown("---")
             
-            # ============================================================
-            # ===== SIMPLE TABLE (NO HIGHLIGHT, NO RERUN) =====
-            # ============================================================
+            # الجدول
             st.markdown("#### 📋 Nearby Wells Table")
             if not nearby_df.empty:
                 display_cols = [well_col, x_col, y_col, f'Distance ({unit_label})']
-                extra_cols = [c for c in df_temp.columns if c not in [well_col, x_col, y_col, 'distance']]
                 display_cols.extend(extra_cols)
-                
                 st.dataframe(
                     nearby_df[display_cols].style.format({f'Distance ({unit_label})': '{:.3f}'}),
                     use_container_width=True,
@@ -404,83 +503,19 @@ if df is not None and not df.empty:
             else:
                 st.warning("⚠️ No other wells found within the specified radius.")
             
-            # ============================================================
-            
-            transformer_global = get_transformer(source_epsg)
-            if transformer_global is None:
-                st.error("Invalid global CRS.")
-                st.stop()
-            
-            def convert_row(row):
-                if epsg_col and epsg_col in row and pd.notna(row[epsg_col]):
-                    epsg = int(row[epsg_col])
-                    transformer = get_transformer(epsg)
-                    if transformer is None:
-                        return pd.Series([None, None], index=['lat', 'lon'])
-                else:
-                    transformer = transformer_global
-                lat, lon = utm_to_latlng(transformer, row[x_col], row[y_col])
-                return pd.Series([lat, lon], index=['lat', 'lon'])
-            
-            df_latlng = df_temp.apply(convert_row, axis=1)
-            df_temp = pd.concat([df_temp, df_latlng], axis=1)
-            df_temp = df_temp.dropna(subset=['lat', 'lon'])
-            
-            if df_temp.empty:
-                st.error("Conversion failed for all wells. Check CRS or Y Offset.")
-                st.stop()
-            
-            center_lat = df_temp[df_temp[well_col] == selected_well]['lat'].values[0]
-            center_lon = df_temp[df_temp[well_col] == selected_well]['lon'].values[0]
-            
+            # الخريطة العامة
             st.markdown("#### 🗺️ General Map (All Wells)")
             st.caption("🖱️ Hover wells for details. 🧭 Use ruler (top-right) to measure. ☰ Layers to change style.")
-            
-            m1 = build_map(
-                center_lat=center_lat,
-                center_lon=center_lon,
-                zoom_start=12,
-                df=df_temp,
-                selected_well=selected_well,
-                search_radius=search_radius_m,
-                polygon_points=polygon_points,
-                transformer_global=transformer_global,
-                unit=distance_unit,
-                zoom_mode=False,
-                well_col=well_col,
-                x_col=x_col,
-                y_col=y_col,
-                epsg_col=epsg_col
-            )
             folium_static(m1, width=1200, height=550)
             
+            # خريطة التكبير
             st.markdown("#### 🔍 Zoom View (Selected + Nearby Wells)")
-            nearby_wells = df_temp[(df_temp['distance'] <= search_radius_m) & (df_temp[well_col] != selected_well)].copy()
-            nearby_wells = pd.concat([nearby_wells, df_temp[df_temp[well_col] == selected_well]])
-            
-            if not nearby_wells.empty:
-                center_lat_zoom = nearby_wells['lat'].mean()
-                center_lon_zoom = nearby_wells['lon'].mean()
-                m2 = build_map(
-                    center_lat=center_lat_zoom,
-                    center_lon=center_lon_zoom,
-                    zoom_start=14,
-                    df=nearby_wells,
-                    selected_well=selected_well,
-                    search_radius=search_radius_m,
-                    polygon_points=polygon_points,
-                    transformer_global=transformer_global,
-                    unit=distance_unit,
-                    zoom_mode=True,
-                    well_col=well_col,
-                    x_col=x_col,
-                    y_col=y_col,
-                    epsg_col=epsg_col
-                )
+            if m2 is not None:
                 folium_static(m2, width=1200, height=500)
             else:
                 st.info("ℹ️ No nearby wells to zoom in on.")
             
+            # أزرار التحميل
             st.markdown("---")
             col_dl1, col_dl2 = st.columns(2)
             with col_dl1:
@@ -498,7 +533,8 @@ if df is not None and not df.empty:
                 except:
                     pass
         else:
-            st.info("👈 Select a well and settings from the sidebar, then click 'Find Nearby Wells'.")
+            if not search_clicked:
+                st.info("👈 Select a well and settings from the sidebar, then click 'Find Nearby Wells'.")
     
     # ================================================================
     # ==================== TAB 2: DATA MANAGEMENT (WITH SAVE BUTTON) ====================
@@ -508,7 +544,6 @@ if df is not None and not df.empty:
         st.caption("✏️ Edit cells freely below. Click **'💾 Save Changes'** to apply all modifications at once.")
         
         if st.session_state.df is not None:
-            # استخدام st.form لمنع إعادة التشغيل أثناء التعديل
             with st.form(key="data_edit_form"):
                 edited_df = st.data_editor(
                     st.session_state.df,
@@ -521,20 +556,15 @@ if df is not None and not df.empty:
                         "y": st.column_config.NumberColumn("Y Coordinate", format="%.2f"),
                     }
                 )
-                
-                # زر الحفظ داخل الفورم (لن يعيد التشغيل إلا عند الضغط عليه)
                 submitted = st.form_submit_button("💾 Save Changes to Memory", use_container_width=True, type="primary")
             
-            # إذا تم الضغط على زر الحفظ
             if submitted:
                 st.session_state.df = edited_df
+                st.session_state.search_active = False  # نلغي نتائج البحث لأن البيانات تغيرت
                 st.success(f"✅ Data saved successfully! Total wells: {len(edited_df)}")
-                st.rerun()  # نعيد التشغيل مرة واحدة لتحديث باقي التطبيق بالبيانات الجديدة
+                st.rerun()
             
-            # عرض العدد الحالي للبيانات (حتى لو لم يتم الحفظ بعد)
             st.info(f"📌 Current total wells in memory: {len(st.session_state.df)}")
-            
-            # تحميل الملف الكامل (دائماً من البيانات المحفوظة في الجلسة)
             csv_full = st.session_state.df.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Download Full Dataset as CSV", data=csv_full, file_name='all_wells_data.csv', mime='text/csv')
         else:
