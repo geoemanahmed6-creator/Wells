@@ -47,15 +47,24 @@ def utm_to_latlng(transformer, x, y):
     except:
         return None, None
 
-# ==================== DATA LOADING ====================
+# ==================== DATA LOADING (FIXED) ====================
 @st.cache_data
 def load_sample_data():
     data = {
-        'Well': ['WD-013', 'WD-068', 'WD-061', 'WD-164', 'WD-159'],
-        'x': [8863112.854, 8863308.970, 8863274.206, 8863096.451, 8863003.079],
-        'y': [6657796.548, 6657795.664, 6657957.022, 6658085.823, 6658132.314]
+        'Well': ['WD-013', 'WD-068', 'WD-061'],
+        'x': [8863112.854, 8863308.970, 8863274.206],
+        'y': [6657796.548, 6657795.664, 6657957.022]
     }
     return pd.DataFrame(data)
+
+def clean_numeric_column(series):
+    """Convert string numbers with spaces (e.g., '816 941.88') to float"""
+    # 1. Convert to string (in case it's already numeric)
+    series = series.astype(str)
+    # 2. Remove spaces, commas, and any non-numeric characters except dot and minus
+    series = series.str.replace(r'[^\d\.\-]', '', regex=True)
+    # 3. Convert to numeric, coerce errors to NaN
+    return pd.to_numeric(series, errors='coerce')
 
 def load_wells_file(uploaded_file, y_shift):
     if uploaded_file is not None:
@@ -64,15 +73,33 @@ def load_wells_file(uploaded_file, y_shift):
                 df = pd.read_excel(uploaded_file, engine='openpyxl')
             else:
                 df = pd.read_csv(uploaded_file)
+            
             required_cols = ['Well', 'x', 'y']
-            if all(col in df.columns for col in required_cols):
-                df['y'] = df['y'] + y_shift  # تطبيق الإزاحة هنا
-                return df
-            else:
+            if not all(col in df.columns for col in required_cols):
                 st.error("File must contain columns: Well, x, y")
                 return None
+            
+            # ---- CLEAN AND CONVERT X & Y TO NUMERIC ----
+            df['x'] = clean_numeric_column(df['x'])
+            df['y'] = clean_numeric_column(df['y'])
+            
+            # Drop rows where conversion failed (invalid numbers)
+            initial_len = len(df)
+            df = df.dropna(subset=['x', 'y'])
+            dropped_count = initial_len - len(df)
+            if dropped_count > 0:
+                st.warning(f"⚠️ {dropped_count} rows had invalid X/Y values and were ignored.")
+            
+            if df.empty:
+                st.error("No valid numeric data found in X/Y columns.")
+                return None
+            
+            # Apply Y offset (now that 'y' is definitely numeric)
+            df['y'] = df['y'] + y_shift
+            
+            return df
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error reading file: {e}")
             return None
     return None
 
@@ -84,6 +111,9 @@ def load_polygon_file(uploaded_poly):
             else:
                 df_poly = pd.read_csv(uploaded_poly)
             if 'x' in df_poly.columns and 'y' in df_poly.columns:
+                df_poly['x'] = clean_numeric_column(df_poly['x'])
+                df_poly['y'] = clean_numeric_column(df_poly['y'])
+                df_poly = df_poly.dropna(subset=['x', 'y'])
                 return df_poly[['x', 'y']].values.tolist()
             else:
                 st.error("Polygon must have columns: x, y")
@@ -107,7 +137,7 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # ===== NEW: Y OFFSET INPUT =====
+    # ===== Y OFFSET INPUT =====
     st.subheader("🔧 Coordinate Correction")
     st.caption("If your Y values are missing the first digits (e.g., 167,000 instead of 3,167,000), add the missing offset here.")
     y_shift = st.number_input("➕ Y Offset (meters) - Add to all Y values", value=0.0, step=100000.0, format="%f")
