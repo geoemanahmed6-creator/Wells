@@ -58,7 +58,7 @@ def format_distance(dist_m, unit):
         return dist_m / 1000.0
     elif "Feet" in unit:
         return dist_m * 3.28084
-    else:  # Meters
+    else:
         return dist_m
 
 def get_unit_label(unit):
@@ -70,12 +70,11 @@ def get_unit_label(unit):
         return "m"
 
 def get_measure_units(unit):
-    """Return primary and secondary units for MeasureControl based on user selection"""
     if "Kilometers" in unit:
         return "kilometers", "meters"
     elif "Feet" in unit:
         return "feet", "meters"
-    else:  # Meters
+    else:
         return "meters", "kilometers"
 
 # ==================== DATA LOADING ====================
@@ -148,23 +147,23 @@ def load_polygon_file(uploaded_poly):
 # ==================== BUILD MAP FUNCTION (UPDATED) ====================
 def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radius, polygon_points, transformer, unit, zoom_mode=False):
     
-    # Base map
     m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_start, tiles=None, control_scale=True)
     
-    # ===== 1. TILE LAYERS (Multiple Views) =====
+    # ===== 1. TILE LAYERS =====
     folium.TileLayer('OpenStreetMap', name='🗺️ Street Map', show=True).add_to(m)
     folium.TileLayer('OpenTopoMap', name='🏔️ Topographic', show=False).add_to(m)
     folium.TileLayer('CartoDB positron', name='🌐 Light Simple', show=False).add_to(m)
     folium.TileLayer('CartoDB dark_matter', name='🌑 Dark Simple', show=False).add_to(m)
     
-    # ===== 2. MEASURE TOOL (Ruler) with Dynamic Units =====
+    # ===== 2. MEASURE TOOL (RULER) - NOW VISIBLE =====
     primary, secondary = get_measure_units(unit)
     MeasureControl(
         position='topright',
         primary_length_unit=primary,
         secondary_length_unit=secondary,
         active_color='red',
-        completed_color='#ff0000'
+        completed_color='#ff0000',
+        toggle_display=True
     ).add_to(m)
     
     # ===== 3. POLYGON BOUNDARY =====
@@ -198,7 +197,7 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
         popup=f"Radius: {search_radius} {get_unit_label(unit)}"
     ).add_to(m)
     
-    # ===== 5. WELLS WITH TOOLTIP (Hover) =====
+    # ===== 5. WELLS =====
     for idx, row in df.iterrows():
         well_name = row['Well']
         dist_m = row['distance']
@@ -234,8 +233,7 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
             icon=folium.Icon(color=color, icon=icon_type, prefix='glyphicon')
         ).add_to(m)
     
-    # ===== 6. LEGEND (SMALLER - UPDATED) =====
-    # Smaller font and padding
+    # ===== 6. LEGEND (SMALLER) =====
     bg_color = '#1a1d23' if st.session_state.get('theme', 'Light') == 'Dark' else 'white'
     text_color = 'white' if st.session_state.get('theme', 'Light') == 'Dark' else 'black'
     border_color = '#444' if st.session_state.get('theme', 'Light') == 'Dark' else '#ccc'
@@ -256,8 +254,8 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
     '''
     m.get_root().html.add_child(folium.Element(legend_html))
     
-    # ===== 7. LAYER CONTROL =====
-    folium.LayerControl().add_to(m)
+    # ===== 7. LAYER CONTROL - NOW FORCED TO SHOW =====
+    folium.LayerControl(position='topright', collapsed=False).add_to(m)
     
     return m
 
@@ -265,20 +263,17 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
 with st.sidebar:
     st.header("⚙️ Settings")
     
-    # Theme
     theme_choice = st.radio("🎨 Theme", ["Light", "Dark"], index=0)
     st.session_state['theme'] = theme_choice
     apply_theme(theme_choice)
     
     st.markdown("---")
     
-    # File uploads
     uploaded_file = st.file_uploader("📂 Upload Wells (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
     uploaded_poly = st.file_uploader("📂 Upload Boundary (optional)", type=['xlsx', 'xls', 'csv'])
     
     st.markdown("---")
     
-    # Y Offset
     st.subheader("🔧 Coordinate Correction")
     y_shift = st.number_input("➕ Y Offset (meters)", value=0.0, step=100000.0, format="%f")
     if y_shift != 0:
@@ -286,7 +281,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # CRS Selection
     crs_options = {
         "WGS 84 / UTM Zone 36N (EPSG:32636)": 32636,
         "WGS 84 / UTM Zone 37N (EPSG:32637)": 32637,
@@ -309,7 +303,6 @@ with st.sidebar:
     st.caption(f"🔄 Converting from EPSG:{source_epsg} to WGS84")
     st.markdown("---")
     
-    # ===== DISTANCE UNIT SELECTION =====
     st.subheader("📏 Distance Unit")
     distance_unit = st.selectbox(
         "Select unit for display & ruler:",
@@ -320,7 +313,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Load Data
     if uploaded_file is not None:
         df = load_wells_file(uploaded_file, y_shift)
         if df is None:
@@ -350,7 +342,9 @@ if df is not None and not df.empty and search_clicked:
     sel_y = selected_row['y'].values[0]
     
     df['distance'] = np.sqrt((df['x'] - sel_x)**2 + (df['y'] - sel_y)**2)
-    nearby_df = df[df['distance'] <= search_radius_m].copy()
+    
+    # استبعاد البئر المختار نفسه
+    nearby_df = df[(df['distance'] <= search_radius_m) & (df['Well'] != selected_well)].copy()
     nearby_df = nearby_df.sort_values('distance').reset_index(drop=True)
     
     unit_label = get_unit_label(distance_unit)
@@ -367,7 +361,7 @@ if df is not None and not df.empty and search_clicked:
         col2.metric("Closest Well", "-")
         col3.metric("Closest Distance", "-")
     
-    st.markdown("#### 📋 Nearby Wells Table (Searchable & Filterable)")
+    st.markdown("#### 📋 Nearby Wells Table")
     if not nearby_df.empty:
         display_cols = ['Well', 'x', 'y', f'Distance ({unit_label})']
         st.dataframe(
@@ -376,7 +370,7 @@ if df is not None and not df.empty and search_clicked:
             height=300
         )
     else:
-        st.warning("No wells found within radius.")
+        st.warning("No other wells found within radius.")
     
     transformer = get_transformer(source_epsg)
     if transformer is None:
@@ -414,9 +408,9 @@ if df is not None and not df.empty and search_clicked:
     st_folium(m1, width=1200, height=500, returned_objects=[])
     
     st.markdown("#### 🔍 Zoom View (Selected + Nearby Wells Only)")
-    nearby_wells = df[df['distance'] <= search_radius_m].copy()
-    if selected_well not in nearby_wells['Well'].values:
-        nearby_wells = pd.concat([nearby_wells, df[df['Well'] == selected_well]])
+    nearby_wells = df[(df['distance'] <= search_radius_m) & (df['Well'] != selected_well)].copy()
+    # أضف البئر المختار للعرض على الخريطة
+    nearby_wells = pd.concat([nearby_wells, df[df['Well'] == selected_well]])
     
     if not nearby_wells.empty:
         center_lat_zoom = nearby_wells['lat'].mean()
