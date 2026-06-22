@@ -3,36 +3,105 @@ import pandas as pd
 import numpy as np
 import folium
 from folium.plugins import MeasureControl
-from streamlit_folium import st_folium
+from streamlit_folium import folium_static  # <-- الحل السحري بدلاً من st_folium
 from pyproj import Transformer
 import tempfile
 import os
 
 # ==================== PAGE CONFIG ====================
-st.set_page_config(page_title="Nearest Wells Finder", layout="wide")
+st.set_page_config(page_title="Nearest Wells Finder", layout="wide", initial_sidebar_state="expanded")
 
-# ==================== THEME TOGGLE ====================
+# ==================== GOOGLE FONTS (Poppins) ====================
+st.markdown("""
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+""", unsafe_allow_html=True)
+
+# ==================== CUSTOM CSS (PROFESSIONAL UI) ====================
 def apply_theme(theme):
     if theme == "Dark":
         st.markdown("""
         <style>
-        .stApp { background-color: #0e1117; color: #ffffff; }
-        .stSidebar { background-color: #262730; color: #ffffff; }
-        .stDataFrame { background-color: #1a1d23; }
-        .stMarkdown, .stText, .stTitle, .stHeader { color: #ffffff !important; }
-        div[data-testid="stMetricValue"] { color: #ffffff; }
-        .stTable { color: #ffffff; }
+            /* Global */
+            .stApp { background: #0b0e14; font-family: 'Poppins', sans-serif; }
+            .stSidebar { background: linear-gradient(180deg, #161b24 0%, #0b0e14 100%); border-right: 1px solid #2a313c; }
+            .stSidebar .stMarkdown, .stSidebar .stText, .stSidebar .stSelectbox, .stSidebar .stNumberInput { color: #e0e4e8; }
+            
+            /* Headers */
+            h1, h2, h3, h4, .stTitle, .stHeader { color: #ffffff !important; font-weight: 600 !important; }
+            
+            /* Cards / Metrics */
+            div[data-testid="stMetricValue"] { color: #f0b90b !important; font-size: 2.2rem !important; font-weight: 700; }
+            div[data-testid="stMetricLabel"] { color: #a0aec0 !important; font-weight: 400; letter-spacing: 0.5px; }
+            div[data-testid="stMetricDelta"] { color: #48bb78 !important; }
+            
+            /* Dataframe */
+            .stDataFrame { background: #161b24; border-radius: 12px; border: 1px solid #2a313c; }
+            .stDataFrame thead tr th { background: #1f2937 !important; color: #f0b90b !important; font-weight: 600; }
+            .stDataFrame tbody tr td { color: #e2e8f0 !important; border-bottom: 1px solid #2a313c; }
+            
+            /* Buttons */
+            .stButton > button {
+                background: linear-gradient(90deg, #f0b90b, #d69e04);
+                color: #0b0e14;
+                font-weight: 600;
+                border: none;
+                border-radius: 8px;
+                padding: 0.6rem 1.5rem;
+                box-shadow: 0 4px 15px rgba(240, 185, 11, 0.3);
+                transition: all 0.3s ease;
+            }
+            .stButton > button:hover {
+                transform: scale(1.02);
+                box-shadow: 0 6px 20px rgba(240, 185, 11, 0.5);
+                background: linear-gradient(90deg, #f5c421, #d69e04);
+            }
+            
+            /* Captions & Info */
+            .stCaption, .stAlert { color: #a0aec0; }
+            .stInfo { background: #1f2937; border-left: 4px solid #f0b90b; }
+            
+            /* Spacing */
+            .block-container { padding-top: 2rem; padding-bottom: 2rem; }
         </style>
         """, unsafe_allow_html=True)
     else:
         st.markdown("""
         <style>
-        .stApp { background-color: #ffffff; color: #000000; }
-        .stSidebar { background-color: #f0f2f6; color: #000000; }
-        .stDataFrame { background-color: #ffffff; }
-        .stMarkdown, .stText, .stTitle, .stHeader { color: #000000 !important; }
-        div[data-testid="stMetricValue"] { color: #000000; }
-        .stTable { color: #000000; }
+            /* Global */
+            .stApp { background: #f8fafc; font-family: 'Poppins', sans-serif; }
+            .stSidebar { background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%); border-right: 1px solid #e2e8f0; }
+            .stSidebar .stMarkdown, .stSidebar .stText, .stSidebar .stSelectbox, .stSidebar .stNumberInput { color: #1e293b; }
+            
+            /* Headers */
+            h1, h2, h3, h4, .stTitle, .stHeader { color: #0f172a !important; font-weight: 600 !important; }
+            
+            /* Cards / Metrics */
+            div[data-testid="stMetricValue"] { color: #2563eb !important; font-size: 2.2rem !important; font-weight: 700; }
+            div[data-testid="stMetricLabel"] { color: #475569 !important; font-weight: 400; letter-spacing: 0.5px; }
+            
+            /* Dataframe */
+            .stDataFrame { background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+            .stDataFrame thead tr th { background: #f1f5f9 !important; color: #0f172a !important; font-weight: 600; }
+            .stDataFrame tbody tr td { color: #1e293b !important; border-bottom: 1px solid #e2e8f0; }
+            
+            /* Buttons */
+            .stButton > button {
+                background: linear-gradient(90deg, #2563eb, #1d4ed8);
+                color: #ffffff;
+                font-weight: 600;
+                border: none;
+                border-radius: 8px;
+                padding: 0.6rem 1.5rem;
+                box-shadow: 0 4px 15px rgba(37, 99, 235, 0.3);
+                transition: all 0.3s ease;
+            }
+            .stButton > button:hover {
+                transform: scale(1.02);
+                box-shadow: 0 6px 20px rgba(37, 99, 235, 0.5);
+                background: linear-gradient(90deg, #3b82f6, #2563eb);
+            }
+            
+            .stInfo { background: #eff6ff; border-left: 4px solid #2563eb; }
         </style>
         """, unsafe_allow_html=True)
 
@@ -144,18 +213,18 @@ def load_polygon_file(uploaded_poly):
             return None
     return None
 
-# ==================== BUILD MAP FUNCTION (UPDATED) ====================
+# ==================== BUILD MAP (FIXED FOR STATIC DISPLAY) ====================
 def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radius, polygon_points, transformer, unit, zoom_mode=False):
     
     m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_start, tiles=None, control_scale=True)
     
-    # ===== 1. TILE LAYERS =====
+    # 1. Tile Layers
     folium.TileLayer('OpenStreetMap', name='🗺️ Street Map', show=True).add_to(m)
     folium.TileLayer('OpenTopoMap', name='🏔️ Topographic', show=False).add_to(m)
     folium.TileLayer('CartoDB positron', name='🌐 Light Simple', show=False).add_to(m)
     folium.TileLayer('CartoDB dark_matter', name='🌑 Dark Simple', show=False).add_to(m)
     
-    # ===== 2. MEASURE TOOL (RULER) - NOW VISIBLE =====
+    # 2. Measure Tool (RULER) - الآن سيظهر بالتأكيد مع folium_static
     primary, secondary = get_measure_units(unit)
     MeasureControl(
         position='topright',
@@ -166,7 +235,7 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
         toggle_display=True
     ).add_to(m)
     
-    # ===== 3. POLYGON BOUNDARY =====
+    # 3. Polygon
     poly_latlng = []
     if polygon_points:
         try:
@@ -182,12 +251,12 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
                     fill=True,
                     fill_color="green",
                     fill_opacity=0.15,
-                    popup="Boundary Polygon"
+                    popup="Boundary"
                 ).add_to(m)
         except:
             pass
     
-    # ===== 4. SEARCH RADIUS =====
+    # 4. Search Radius
     folium.Circle(
         location=[center_lat, center_lon],
         radius=search_radius,
@@ -197,7 +266,7 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
         popup=f"Radius: {search_radius} {get_unit_label(unit)}"
     ).add_to(m)
     
-    # ===== 5. WELLS =====
+    # 5. Wells
     for idx, row in df.iterrows():
         well_name = row['Well']
         dist_m = row['distance']
@@ -228,40 +297,40 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
         
         folium.Marker(
             location=[row['lat'], row['lon']],
-            popup=f"<b>{well_name}</b><br>X: {x_val:.2f}<br>Y: {y_val:.2f}",
+            popup=f"<b>{well_name}</b>",
             tooltip=tooltip,
             icon=folium.Icon(color=color, icon=icon_type, prefix='glyphicon')
         ).add_to(m)
     
-    # ===== 6. LEGEND (SMALLER) =====
-    bg_color = '#1a1d23' if st.session_state.get('theme', 'Light') == 'Dark' else 'white'
-    text_color = 'white' if st.session_state.get('theme', 'Light') == 'Dark' else 'black'
-    border_color = '#444' if st.session_state.get('theme', 'Light') == 'Dark' else '#ccc'
+    # 6. Legend (Stylish)
+    bg_color = '#161b24' if st.session_state.get('theme', 'Light') == 'Dark' else '#ffffff'
+    text_color = '#e2e8f0' if st.session_state.get('theme', 'Light') == 'Dark' else '#1e293b'
+    border_color = '#2a313c' if st.session_state.get('theme', 'Light') == 'Dark' else '#e2e8f0'
     
     legend_html = f'''
     <div style="position: fixed; bottom: 30px; left: 30px; z-index: 1000; 
-                background: {bg_color}; padding: 6px 10px; 
-                border-radius: 6px; border: 1px solid {border_color}; 
-                font-size: 11px; font-family: Arial; 
-                box-shadow: 1px 1px 6px rgba(0,0,0,0.2);
-                color: {text_color}; line-height: 1.5;">
-        <b>📍 Legend</b><br>
-        <span style="color: red;">●</span> Selected Well<br>
-        <span style="color: blue;">●</span> Nearby Well<br>
-        <span style="color: gray;">●</span> Other Well<br>
-        <span style="color: green; border: 1px solid green; padding: 0px 8px;">▬</span> Boundary
+                background: {bg_color}; padding: 8px 14px; 
+                border-radius: 10px; border: 1px solid {border_color}; 
+                font-size: 12px; font-family: 'Poppins', Arial; 
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                color: {text_color}; line-height: 1.8; backdrop-filter: blur(4px);">
+        <b style="font-size:13px;">📍 Legend</b><br>
+        <span style="color: #ef4444;">●</span> Selected Well<br>
+        <span style="color: #3b82f6;">●</span> Nearby Well<br>
+        <span style="color: #94a3b8;">●</span> Other Well<br>
+        <span style="color: #22c55e; border: 1px solid #22c55e; padding: 0px 10px;">▬</span> Boundary
     </div>
     '''
     m.get_root().html.add_child(folium.Element(legend_html))
     
-    # ===== 7. LAYER CONTROL - NOW FORCED TO SHOW =====
+    # 7. Layer Control (Visible)
     folium.LayerControl(position='topright', collapsed=False).add_to(m)
     
     return m
 
-# ==================== SIDEBAR UI ====================
+# ==================== SIDEBAR ====================
 with st.sidebar:
-    st.header("⚙️ Settings")
+    st.markdown("## ⚙️ Settings")
     
     theme_choice = st.radio("🎨 Theme", ["Light", "Dark"], index=0)
     st.session_state['theme'] = theme_choice
@@ -269,18 +338,16 @@ with st.sidebar:
     
     st.markdown("---")
     
-    uploaded_file = st.file_uploader("📂 Upload Wells (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
+    uploaded_file = st.file_uploader("📂 Upload Wells", type=['xlsx', 'xls', 'csv'])
     uploaded_poly = st.file_uploader("📂 Upload Boundary (optional)", type=['xlsx', 'xls', 'csv'])
     
     st.markdown("---")
-    
     st.subheader("🔧 Coordinate Correction")
     y_shift = st.number_input("➕ Y Offset (meters)", value=0.0, step=100000.0, format="%f")
     if y_shift != 0:
         st.success(f"✅ Y increased by {y_shift:,.0f} m")
     
     st.markdown("---")
-    
     crs_options = {
         "WGS 84 / UTM Zone 36N (EPSG:32636)": 32636,
         "WGS 84 / UTM Zone 37N (EPSG:32637)": 32637,
@@ -291,28 +358,19 @@ with st.sidebar:
         "WGS 84 Geographic (EPSG:4326)": 4326,
         "Custom EPSG Code": "custom"
     }
-    
-    selected_crs_label = st.selectbox("🌍 Source Coordinate System", list(crs_options.keys()), index=0)
-    
+    selected_crs_label = st.selectbox("🌍 Source CRS", list(crs_options.keys()), index=0)
     if crs_options[selected_crs_label] == "custom":
-        custom_epsg = st.number_input("Enter EPSG Code", value=32636, step=1)
+        custom_epsg = st.number_input("EPSG Code", value=32636, step=1)
         source_epsg = int(custom_epsg)
     else:
         source_epsg = crs_options[selected_crs_label]
+    st.caption(f"🔄 Converting EPSG:{source_epsg} to WGS84")
     
-    st.caption(f"🔄 Converting from EPSG:{source_epsg} to WGS84")
     st.markdown("---")
-    
     st.subheader("📏 Distance Unit")
-    distance_unit = st.selectbox(
-        "Select unit for display & ruler:",
-        ["Meters (m)", "Kilometers (km)", "Feet (ft)"],
-        index=0
-    )
-    st.caption("✨ Changes table, tooltips, AND the ruler tool.")
+    distance_unit = st.selectbox("Select unit:", ["Meters (m)", "Kilometers (km)", "Feet (ft)"], index=0)
     
     st.markdown("---")
-    
     if uploaded_file is not None:
         df = load_wells_file(uploaded_file, y_shift)
         if df is None:
@@ -328,7 +386,7 @@ with st.sidebar:
     if df is not None and not df.empty:
         well_list = df['Well'].tolist()
         selected_well = st.selectbox("🟢 Select a Well", well_list, index=0)
-        search_radius_m = st.number_input("📏 Search Radius (meters)", min_value=0.0, value=500.0, step=50.0)
+        search_radius_m = st.number_input("📏 Search Radius (m)", min_value=0.0, value=500.0, step=50.0)
         search_clicked = st.button("🔍 Find Nearby Wells", use_container_width=True, type="primary")
 
 # ==================== MAIN CONTENT ====================
@@ -343,24 +401,33 @@ if df is not None and not df.empty and search_clicked:
     
     df['distance'] = np.sqrt((df['x'] - sel_x)**2 + (df['y'] - sel_y)**2)
     
-    # استبعاد البئر المختار نفسه
+    # Exclude the selected well itself
     nearby_df = df[(df['distance'] <= search_radius_m) & (df['Well'] != selected_well)].copy()
     nearby_df = nearby_df.sort_values('distance').reset_index(drop=True)
     
     unit_label = get_unit_label(distance_unit)
     nearby_df[f'Distance ({unit_label})'] = nearby_df['distance'].apply(lambda d: format_distance(d, distance_unit))
     
-    st.markdown(f"### ✅ Results for Well **{selected_well}**")
+    # Professional Stats Cards
+    st.markdown(f"### 🎯 Results for Well **{selected_well}**")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Nearby Wells", len(nearby_df))
-    if not nearby_df.empty:
-        col2.metric("Closest Well", nearby_df.iloc[0]['Well'])
-        closest_dist = format_distance(nearby_df.iloc[0]['distance'], distance_unit)
-        col3.metric("Closest Distance", f"{closest_dist:.3f} {unit_label}")
-    else:
-        col2.metric("Closest Well", "-")
-        col3.metric("Closest Distance", "-")
+    with col1:
+        st.metric("📌 Nearby Wells", len(nearby_df))
+    with col2:
+        if not nearby_df.empty:
+            st.metric("🏆 Closest Well", nearby_df.iloc[0]['Well'])
+        else:
+            st.metric("🏆 Closest Well", "-")
+    with col3:
+        if not nearby_df.empty:
+            closest_dist = format_distance(nearby_df.iloc[0]['distance'], distance_unit)
+            st.metric("📏 Closest Distance", f"{closest_dist:.3f} {unit_label}")
+        else:
+            st.metric("📏 Closest Distance", "-")
     
+    st.markdown("---")
+    
+    # Table
     st.markdown("#### 📋 Nearby Wells Table")
     if not nearby_df.empty:
         display_cols = ['Well', 'x', 'y', f'Distance ({unit_label})']
@@ -370,8 +437,9 @@ if df is not None and not df.empty and search_clicked:
             height=300
         )
     else:
-        st.warning("No other wells found within radius.")
+        st.warning("⚠️ No other wells found within the specified radius.")
     
+    # Transformation
     transformer = get_transformer(source_epsg)
     if transformer is None:
         st.stop()
@@ -391,8 +459,10 @@ if df is not None and not df.empty and search_clicked:
     center_lat = df[df['Well'] == selected_well]['lat'].values[0]
     center_lon = df[df['Well'] == selected_well]['lon'].values[0]
     
+    # ===== MAP 1: General View =====
     st.markdown("#### 🗺️ General Map (All Wells)")
-    st.caption("🖱️ Hover over wells for details. 🧭 Click the ruler icon (top-right) to measure distances. ☰ Click layers icon to change map style.")
+    st.caption("🖱️ Hover wells for details. 🧭 Use ruler (top-right) to measure distances. ☰ Layers icon to change map style.")
+    
     m1 = build_map(
         center_lat=center_lat,
         center_lon=center_lon,
@@ -405,11 +475,12 @@ if df is not None and not df.empty and search_clicked:
         unit=distance_unit,
         zoom_mode=False
     )
-    st_folium(m1, width=1200, height=500, returned_objects=[])
+    # استخدمي folium_static بدلاً من st_folium
+    folium_static(m1, width=1200, height=550)
     
-    st.markdown("#### 🔍 Zoom View (Selected + Nearby Wells Only)")
+    # ===== MAP 2: Zoom View =====
+    st.markdown("#### 🔍 Zoom View (Selected + Nearby Wells)")
     nearby_wells = df[(df['distance'] <= search_radius_m) & (df['Well'] != selected_well)].copy()
-    # أضف البئر المختار للعرض على الخريطة
     nearby_wells = pd.concat([nearby_wells, df[df['Well'] == selected_well]])
     
     if not nearby_wells.empty:
@@ -427,10 +498,12 @@ if df is not None and not df.empty and search_clicked:
             unit=distance_unit,
             zoom_mode=True
         )
-        st_folium(m2, width=1200, height=450, returned_objects=[])
+        folium_static(m2, width=1200, height=500)
     else:
-        st.info("No nearby wells to zoom in on.")
+        st.info("ℹ️ No nearby wells to zoom in on.")
     
+    # ===== Download Buttons =====
+    st.markdown("---")
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
         if not nearby_df.empty:
@@ -438,16 +511,16 @@ if df is not None and not df.empty and search_clicked:
             st.download_button("📥 Download Results CSV", data=csv, file_name='nearest_wells.csv', mime='text/csv', use_container_width=True)
     
     with col_dl2:
-        if 'm1' in locals():
-            html_path = tempfile.NamedTemporaryFile(delete=False, suffix='.html').name
-            m1.save(html_path)
-            with open(html_path, 'r', encoding='utf-8') as f:
-                html_data = f.read()
-            st.download_button("🗺️ Export Map as HTML", data=html_data, file_name='wells_map.html', mime='text/html', use_container_width=True)
-            try:
-                os.unlink(html_path)
-            except:
-                pass
+        # Export map as HTML
+        html_path = tempfile.NamedTemporaryFile(delete=False, suffix='.html').name
+        m1.save(html_path)
+        with open(html_path, 'r', encoding='utf-8') as f:
+            html_data = f.read()
+        st.download_button("🗺️ Export Map as HTML", data=html_data, file_name='wells_map.html', mime='text/html', use_container_width=True)
+        try:
+            os.unlink(html_path)
+        except:
+            pass
 
 else:
     if not search_clicked:
