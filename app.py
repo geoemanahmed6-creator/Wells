@@ -10,7 +10,6 @@ import os
 import zipfile
 import io
 import shapefile  # pyshp
-
 # ==================== PAGE CONFIG (FULL WIDTH & COMPACT) ====================
 st.set_page_config(page_title="Nearest Wells Finder", layout="wide", initial_sidebar_state="expanded")
 
