@@ -7,54 +7,52 @@ from streamlit_folium import folium_static
 from pyproj import Transformer
 import tempfile
 import os
+import zipfile
+import io
+import shapefile  # pyshp
 
-# ==================== PAGE CONFIG ====================
+# ==================== PAGE CONFIG (FULL WIDTH & COMPACT) ====================
 st.set_page_config(page_title="Nearest Wells Finder", layout="wide", initial_sidebar_state="expanded")
+
+# ==================== CUSTOM CSS (REDUCE PADDING FOR FIT-TO-SCREEN) ====================
+def apply_theme(theme):
+    # تقليل الهوامش العلوية والسفلية لجعل المحتوى يغطي الشاشة
+    padding_top = "0.5rem" if theme == "Dark" else "0.5rem"
+    padding_bottom = "0.5rem"
+    
+    base_css = f"""
+    <style>
+        .stApp {{ background: {'#0b0e14' if theme == "Dark" else '#f8fafc'}; font-family: 'Poppins', sans-serif; }}
+        .main .block-container {{
+            padding-top: {padding_top};
+            padding-bottom: {padding_bottom};
+            max-width: 100%;
+        }}
+        .stSidebar {{ background: {'linear-gradient(180deg, #161b24 0%, #0b0e14 100%)' if theme == "Dark" else 'linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%)'}; border-right: 1px solid {'#2a313c' if theme == "Dark" else '#e2e8f0'}; }}
+        .stSidebar .stMarkdown, .stSidebar .stText, .stSidebar .stSelectbox, .stSidebar .stNumberInput {{ color: {'#e0e4e8' if theme == "Dark" else '#1e293b'}; }}
+        h1, h2, h3, h4, .stTitle, .stHeader {{ color: {'#ffffff' if theme == "Dark" else '#0f172a'} !important; font-weight: 600 !important; }}
+        div[data-testid="stMetricValue"] {{ color: {'#f0b90b' if theme == "Dark" else '#2563eb'} !important; font-size: 1.8rem !important; font-weight: 700; }}
+        div[data-testid="stMetricLabel"] {{ color: {'#a0aec0' if theme == "Dark" else '#475569'} !important; }}
+        .stDataFrame {{ background: {'#161b24' if theme == "Dark" else '#ffffff'}; border-radius: 12px; border: 1px solid {'#2a313c' if theme == "Dark" else '#e2e8f0'}; }}
+        .stDataFrame thead tr th {{ background: {'#1f2937' if theme == "Dark" else '#f1f5f9'} !important; color: {'#f0b90b' if theme == "Dark" else '#0f172a'} !important; }}
+        .stDataFrame tbody tr td {{ color: {'#e2e8f0' if theme == "Dark" else '#1e293b'} !important; }}
+        .stButton > button {{ background: {'linear-gradient(90deg, #f0b90b, #d69e04)' if theme == "Dark" else 'linear-gradient(90deg, #2563eb, #1d4ed8)'}; color: {'#0b0e14' if theme == "Dark" else '#ffffff'}; font-weight: 600; border: none; border-radius: 8px; padding: 0.4rem 1.2rem; box-shadow: 0 4px 15px rgba({('240, 185, 11' if theme == "Dark" else '37, 99, 235')}, 0.3); }}
+        .stButton > button:hover {{ transform: scale(1.02); box-shadow: 0 6px 20px rgba({('240, 185, 11' if theme == "Dark" else '37, 99, 235')}, 0.5); }}
+        .stTabs [data-baseweb="tab-list"] {{ gap: 2px; background-color: {'#1f2937' if theme == "Dark" else '#e2e8f0'}; border-radius: 10px; padding: 4px; }}
+        .stTabs [data-baseweb="tab"] {{ border-radius: 8px; padding: 4px 12px; color: {'#94a3b8' if theme == "Dark" else '#475569'}; font-size: 0.9rem; }}
+        .stTabs [aria-selected="true"] {{ background-color: {'#f0b90b' if theme == "Dark" else '#2563eb'} !important; color: {'#0b0e14' if theme == "Dark" else '#ffffff'} !important; font-weight: 600; }}
+        .stCaption {{ font-size: 0.7rem; }}
+        /* تقليل المسافات بين العناصر */
+        .element-container {{ margin-bottom: 0.2rem !important; }}
+        .stMarkdown {{ margin-bottom: 0.2rem !important; }}
+    </style>
+    """
+    st.markdown(base_css, unsafe_allow_html=True)
 
 # ==================== GOOGLE FONTS ====================
 st.markdown("""
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
 """, unsafe_allow_html=True)
-
-# ==================== CUSTOM CSS (PROFESSIONAL UI) ====================
-def apply_theme(theme):
-    if theme == "Dark":
-        st.markdown("""
-        <style>
-            .stApp { background: #0b0e14; font-family: 'Poppins', sans-serif; }
-            .stSidebar { background: linear-gradient(180deg, #161b24 0%, #0b0e14 100%); border-right: 1px solid #2a313c; }
-            .stSidebar .stMarkdown, .stSidebar .stText, .stSidebar .stSelectbox, .stSidebar .stNumberInput { color: #e0e4e8; }
-            h1, h2, h3, h4, .stTitle, .stHeader { color: #ffffff !important; font-weight: 600 !important; }
-            div[data-testid="stMetricValue"] { color: #f0b90b !important; font-size: 2.2rem !important; font-weight: 700; }
-            div[data-testid="stMetricLabel"] { color: #a0aec0 !important; }
-            .stDataFrame { background: #161b24; border-radius: 12px; border: 1px solid #2a313c; }
-            .stDataFrame thead tr th { background: #1f2937 !important; color: #f0b90b !important; }
-            .stDataFrame tbody tr td { color: #e2e8f0 !important; }
-            .stButton > button { background: linear-gradient(90deg, #f0b90b, #d69e04); color: #0b0e14; font-weight: 600; border: none; border-radius: 8px; padding: 0.6rem 1.5rem; box-shadow: 0 4px 15px rgba(240, 185, 11, 0.3); }
-            .stButton > button:hover { transform: scale(1.02); box-shadow: 0 6px 20px rgba(240, 185, 11, 0.5); }
-            .stTabs [data-baseweb="tab-list"] { gap: 2px; background-color: #1f2937; border-radius: 10px; padding: 4px; }
-            .stTabs [data-baseweb="tab"] { border-radius: 8px; padding: 8px 16px; color: #94a3b8; }
-            .stTabs [aria-selected="true"] { background-color: #f0b90b !important; color: #0b0e14 !important; font-weight: 600; }
-        </style>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <style>
-            .stApp { background: #f8fafc; font-family: 'Poppins', sans-serif; }
-            .stSidebar { background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%); border-right: 1px solid #e2e8f0; }
-            h1, h2, h3, h4, .stTitle, .stHeader { color: #0f172a !important; font-weight: 600 !important; }
-            div[data-testid="stMetricValue"] { color: #2563eb !important; font-size: 2.2rem !important; font-weight: 700; }
-            div[data-testid="stMetricLabel"] { color: #475569 !important; }
-            .stDataFrame { background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; }
-            .stDataFrame thead tr th { background: #f1f5f9 !important; color: #0f172a !important; }
-            .stDataFrame tbody tr td { color: #1e293b !important; }
-            .stButton > button { background: linear-gradient(90deg, #2563eb, #1d4ed8); color: #ffffff; font-weight: 600; border: none; border-radius: 8px; padding: 0.6rem 1.5rem; box-shadow: 0 4px 15px rgba(37, 99, 235, 0.3); }
-            .stButton > button:hover { transform: scale(1.02); box-shadow: 0 6px 20px rgba(37, 99, 235, 0.5); }
-            .stTabs [data-baseweb="tab-list"] { gap: 2px; background-color: #e2e8f0; border-radius: 10px; padding: 4px; }
-            .stTabs [data-baseweb="tab"] { border-radius: 8px; padding: 8px 16px; color: #475569; }
-            .stTabs [aria-selected="true"] { background-color: #2563eb !important; color: #ffffff !important; font-weight: 600; }
-        </style>
-        """, unsafe_allow_html=True)
 
 # ==================== CRS FUNCTIONS ====================
 @st.cache_resource
@@ -96,7 +94,7 @@ def get_measure_units(unit):
     else:
         return "meters", "kilometers"
 
-# ==================== DATA LOADING & CLEANING ====================
+# ==================== DATA LOADING ====================
 def clean_numeric_column(series):
     series = series.astype(str)
     series = series.str.replace(r'[^\d\.\-]', '', regex=True)
@@ -115,30 +113,64 @@ def load_wells_file(uploaded_file):
             return None
     return None
 
-def load_polygon_file(uploaded_poly):
-    if uploaded_poly is not None:
+# ==================== LOAD POLYGON FROM SHAPEFILE (ZIP) ====================
+def load_polygon_from_zip(uploaded_zip):
+    if uploaded_zip is not None:
         try:
-            if uploaded_poly.name.endswith(('.xlsx', '.xls')):
-                df_poly = pd.read_excel(uploaded_poly, engine='openpyxl')
-            else:
-                df_poly = pd.read_csv(uploaded_poly)
-            if 'x' in df_poly.columns and 'y' in df_poly.columns:
-                df_poly['x'] = clean_numeric_column(df_poly['x'])
-                df_poly['y'] = clean_numeric_column(df_poly['y'])
-                df_poly = df_poly.dropna(subset=['x', 'y'])
-                return df_poly[['x', 'y']].values.tolist()
-            else:
-                st.error("Polygon must have columns: x, y")
-                return None
+            # قراءة الملف المضغوط
+            with zipfile.ZipFile(io.BytesIO(uploaded_zip.read())) as z:
+                # البحث عن ملف .shp داخل الـ Zip
+                shp_files = [f for f in z.namelist() if f.endswith('.shp')]
+                if not shp_files:
+                    st.error("No .shp file found in the ZIP archive.")
+                    return None
+                shp_file = shp_files[0]
+                
+                # استخراج محتوى .shp إلى ذاكرة مؤقتة
+                shp_data = z.read(shp_file)
+                
+                # البحث عن ملفات .shx و .dbf المصاحبة
+                shx_name = shp_file.replace('.shp', '.shx')
+                dbf_name = shp_file.replace('.shp', '.dbf')
+                
+                shx_data = z.read(shx_name) if shx_name in z.namelist() else None
+                dbf_data = z.read(dbf_name) if dbf_name in z.namelist() else None
+                
+                # قراءة الـ Shapefile باستخدام pyshp من الذاكرة
+                # pyshp يتوقع مسار ملف أو BytesIO
+                from io import BytesIO
+                shp_io = BytesIO(shp_data)
+                shx_io = BytesIO(shx_data) if shx_data else None
+                dbf_io = BytesIO(dbf_data) if dbf_data else None
+                
+                # فتح القارئ
+                if shx_io and dbf_io:
+                    reader = shapefile.Reader(shp=shp_io, shx=shx_io, dbf=dbf_io)
+                else:
+                    reader = shapefile.Reader(shp=shp_io)
+                
+                shapes = reader.shapes()
+                if not shapes:
+                    st.error("No shapes found in the shapefile.")
+                    return None
+                
+                # نأخذ أول مضلع (يفترض أن المضلع واحد)
+                # استخراج النقاط (x, y)
+                points = shapes[0].points
+                
+                # تحويل إلى قائمة [x, y] ليتوافق مع الكود السابق
+                polygon_coords = [[p[0], p[1]] for p in points]
+                return polygon_coords
+                
         except Exception as e:
-            st.error(f"Polygon error: {e}")
+            st.error(f"Error reading shapefile: {e}")
             return None
     return None
 
-# ==================== BUILD MAP (NO HIGHLIGHT) ====================
+# ==================== BUILD MAP (WITH CUSTOM TOOLTIP) ====================
 def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radius, polygon_points, 
               transformer_global, unit, zoom_mode=False, 
-              well_col='Well', x_col='x', y_col='y', epsg_col=None):
+              well_col='Well', x_col='x', y_col='y', epsg_col=None, hover_cols=None):
     
     m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_start, tiles=None, control_scale=True)
     
@@ -171,7 +203,11 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
     folium.Circle(location=[center_lat, center_lon], radius=search_radius, color='red', 
                   weight=2, fill=False, popup=f"Radius: {search_radius} {get_unit_label(unit)}").add_to(m)
     
-    # ----- Wells Loop -----
+    # ----- Wells Loop (With Customizable Tooltip) -----
+    # إذا لم يتم تحديد hover_cols، نعرض فقط اسم البئر والمسافة
+    if hover_cols is None:
+        hover_cols = []
+    
     for idx, row in df.iterrows():
         well_name = row[well_col]
         
@@ -203,10 +239,14 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
             color = 'gray'
             icon_type = 'minus-sign'
         
+        # بناء التلميح (Tooltip) بناءً على الأعمدة المختارة من قبل المستخدم
         tooltip_text = f"<b>Well:</b> {well_name}<br>"
-        for col in df.columns:
-            if col not in [well_col, x_col, y_col, 'distance', 'lat', 'lon']:
+        
+        # عرض الأعمدة المختارة (مع استبعاد الأعمدة الأساسية التي قد تم اختيارها)
+        for col in hover_cols:
+            if col in row and col not in [well_col, x_col, y_col, 'distance', 'lat', 'lon']:
                 tooltip_text += f"<b>{col}:</b> {row[col]}<br>"
+        
         tooltip_text += f"<b>Distance:</b> {dist_formatted:.3f} {dist_label}"
         
         tooltip = folium.Tooltip(tooltip_text, sticky=True)
@@ -225,16 +265,16 @@ def build_map(center_lat, center_lon, zoom_start, df, selected_well, search_radi
     
     legend_html = f'''
     <div style="position: fixed; bottom: 30px; left: 30px; z-index: 1000; 
-                background: {bg_color}; padding: 8px 14px; 
-                border-radius: 10px; border: 1px solid {border_color}; 
-                font-size: 12px; font-family: 'Poppins', Arial; 
+                background: {bg_color}; padding: 6px 12px; 
+                border-radius: 8px; border: 1px solid {border_color}; 
+                font-size: 11px; font-family: 'Poppins', Arial; 
                 box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                color: {text_color}; line-height: 1.8; backdrop-filter: blur(4px);">
-        <b style="font-size:13px;">📍 Legend</b><br>
-        <span style="color: #ef4444;">●</span> Selected Well (Main)<br>
-        <span style="color: #3b82f6;">●</span> Nearby Well (within radius)<br>
-        <span style="color: #94a3b8;">●</span> Other Well (outside radius)<br>
-        <span style="color: #22c55e; border: 1px solid #22c55e; padding: 0px 10px;">▬</span> Boundary Polygon
+                color: {text_color}; line-height: 1.6; backdrop-filter: blur(4px);">
+        <b style="font-size:12px;">📍 Legend</b><br>
+        <span style="color: #ef4444;">●</span> Selected<br>
+        <span style="color: #3b82f6;">●</span> Nearby<br>
+        <span style="color: #94a3b8;">●</span> Other<br>
+        <span style="color: #22c55e; border: 1px solid #22c55e; padding: 0px 8px;">▬</span> Boundary
     </div>
     '''
     m.get_root().html.add_child(folium.Element(legend_html))
@@ -256,21 +296,22 @@ if 'search_active' not in st.session_state:
 with st.sidebar:
     st.markdown("## ⚙️ Settings")
     
-    # Theme (هذا الـ Widget سيسبب Rerun، ولكننا سنعرض النتائج المخزنة في session_state)
+    # Theme
     theme_choice = st.radio("🎨 Theme", ["Light", "Dark"], index=0)
     st.session_state['theme'] = theme_choice
     apply_theme(theme_choice)
     
     st.markdown("---")
     
+    # File Uploads
     uploaded_file = st.file_uploader("📂 Upload Wells (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
-    uploaded_poly = st.file_uploader("📂 Upload Boundary (optional)", type=['xlsx', 'xls', 'csv'])
+    uploaded_poly = st.file_uploader("📂 Upload Polygon (ZIP - Shapefile)", type=['zip'])
     
     if uploaded_file is not None:
         df = load_wells_file(uploaded_file)
         if df is not None:
             st.session_state.df = df
-            st.session_state.search_active = False  # إلغاء نتائج البحث السابقة عند رفع ملف جديد
+            st.session_state.search_active = False
     elif st.session_state.df is None:
         sample = pd.DataFrame({
             'Well': ['WD-013', 'WD-068', 'WD-061'],
@@ -280,10 +321,12 @@ with st.sidebar:
             'Pressure': [3200, 3100, 3050]
         })
         st.session_state.df = sample
-        st.info("💡 Using sample data with extra columns (Production_Rate, Pressure).")
+        st.info("💡 Using sample data.")
     
     if uploaded_poly is not None:
-        st.session_state.polygon_points = load_polygon_file(uploaded_poly)
+        st.session_state.polygon_points = load_polygon_from_zip(uploaded_poly)
+        if st.session_state.polygon_points:
+            st.success("✅ Polygon loaded successfully!")
     
     df = st.session_state.df
     polygon_points = st.session_state.polygon_points
@@ -292,57 +335,78 @@ with st.sidebar:
         st.markdown("---")
         st.subheader("📋 Column Mapping")
         
-        well_col = st.selectbox("Well Name Column", df.columns, index=list(df.columns).index('Well') if 'Well' in df.columns else 0)
-        x_col = st.selectbox("X Coordinate Column", df.columns, index=list(df.columns).index('x') if 'x' in df.columns else 0)
-        y_col = st.selectbox("Y Coordinate Column", df.columns, index=list(df.columns).index('y') if 'y' in df.columns else 1)
+        well_col = st.selectbox("Well Name", df.columns, index=list(df.columns).index('Well') if 'Well' in df.columns else 0)
+        x_col = st.selectbox("X Coordinate", df.columns, index=list(df.columns).index('x') if 'x' in df.columns else 0)
+        y_col = st.selectbox("Y Coordinate", df.columns, index=list(df.columns).index('y') if 'y' in df.columns else 1)
         
         epsg_col = None
         if 'EPSG' in df.columns or 'epsg' in df.columns:
             epsg_options = [c for c in df.columns if c.lower() == 'epsg']
             epsg_col = epsg_options[0]
-            st.success(f"✅ Found EPSG column '{epsg_col}' - Using per-well CRS!")
+            st.success(f"✅ Found EPSG column '{epsg_col}'")
         else:
-            st.info("ℹ️ No 'EPSG' column found. All wells will use the global CRS selected below.")
+            st.info("ℹ️ No EPSG column found.")
         
         st.markdown("---")
         st.subheader("🔧 Coordinate Correction")
-        y_shift = st.number_input("➕ Y Offset (meters)", value=0.0, step=100000.0, format="%f")
+        y_shift = st.number_input("➕ Y Offset (m)", value=0.0, step=100000.0, format="%f")
         if y_shift != 0:
             st.success(f"✅ Y increased by {y_shift:,.0f} m")
             df[y_col] = df[y_col] + y_shift
             st.session_state.df = df
-            st.session_state.search_active = False  # إلغاء النتائج عند تغيير الإحداثيات
+            st.session_state.search_active = False
         
         st.markdown("---")
         crs_options = {
-            "WGS 84 / UTM Zone 36N (EPSG:32636)": 32636,
-            "WGS 84 / UTM Zone 37N (EPSG:32637)": 32637,
-            "Egypt 1907 / Red Belt (EPSG:22992)": 22992,
-            "Egypt 1907 / Blue Belt (EPSG:22991)": 22991,
-            "Egypt 1907 / Purple Belt (EPSG:22993)": 22993,
-            "Egypt 1907 / Extended Purple (EPSG:22994)": 22994,
-            "WGS 84 Geographic (EPSG:4326)": 4326,
-            "Custom EPSG Code": "custom"
+            "WGS 84 / UTM Zone 36N (32636)": 32636,
+            "WGS 84 / UTM Zone 37N (32637)": 32637,
+            "Egypt 1907 / Red Belt (22992)": 22992,
+            "Egypt 1907 / Blue Belt (22991)": 22991,
+            "Egypt 1907 / Purple Belt (22993)": 22993,
+            "Egypt 1907 / Extended Purple (22994)": 22994,
+            "WGS 84 Geographic (4326)": 4326,
+            "Custom": "custom"
         }
-        selected_crs_label = st.selectbox("🌍 Global Source CRS", list(crs_options.keys()), index=0)
+        selected_crs_label = st.selectbox("🌍 Source CRS", list(crs_options.keys()), index=0)
         if crs_options[selected_crs_label] == "custom":
             custom_epsg = st.number_input("EPSG Code", value=32636, step=1)
             source_epsg = int(custom_epsg)
         else:
             source_epsg = crs_options[selected_crs_label]
-        st.caption(f"🔄 Converting EPSG:{source_epsg} to WGS84")
         
         st.markdown("---")
         st.subheader("📏 Distance Unit")
-        distance_unit = st.selectbox("Select unit:", ["Meters (m)", "Kilometers (km)", "Feet (ft)"], index=0)
+        distance_unit = st.selectbox("Unit", ["Meters (m)", "Kilometers (km)", "Feet (ft)"], index=0)
         
         st.markdown("---")
+        
+        # ===== NEW: TOOLTIP CUSTOMIZATION =====
+        st.subheader("🖱️ Tooltip Settings")
+        st.caption("Select additional fields to show on hover (Well & Distance are always shown).")
+        
+        # الأعمدة المتاحة للعرض في التلميح (نستثني الأعمدة الأساسية)
+        all_cols = df.columns.tolist()
+        exclude_cols = [well_col, x_col, y_col]
+        available_cols = [c for c in all_cols if c not in exclude_cols]
+        
+        default_cols = []
+        if 'Production_Rate' in available_cols:
+            default_cols.append('Production_Rate')
+        if 'Pressure' in available_cols:
+            default_cols.append('Pressure')
+        
+        hover_cols = st.multiselect(
+            "Select fields to show in tooltip:",
+            available_cols,
+            default=default_cols
+        )
+        st.markdown("---")
+        
         well_list = df[well_col].tolist()
         selected_well = st.selectbox("🟢 Select a Well", well_list, index=0)
         search_radius_m = st.number_input("📏 Search Radius (m)", min_value=0.0, value=500.0, step=50.0)
         search_clicked = st.button("🔍 Find Nearby Wells", use_container_width=True, type="primary")
         
-        # إذا تم الضغط على زر البحث، نلغي التخزين المؤقت للبحث السابق لنحسب الجديد
         if search_clicked:
             st.session_state.search_active = False
     else:
@@ -355,10 +419,9 @@ if df is not None and not df.empty:
     
     with tab1:
         # ================================================================
-        # 1. حالة البحث الجديد (تم الضغط على الزر)
+        # 1. NEW SEARCH
         # ================================================================
         if search_clicked:
-            # --- تنفيذ العمليات الحسابية الثقيلة ---
             df_temp = df.copy()
             
             df_temp[x_col] = clean_numeric_column(df_temp[x_col])
@@ -380,7 +443,6 @@ if df is not None and not df.empty:
                     
                     extra_cols = [c for c in df_temp.columns if c not in [well_col, x_col, y_col, 'distance']]
                     
-                    # تحويل الإحداثيات للخريطة
                     transformer_global = get_transformer(source_epsg)
                     if transformer_global is not None:
                         def convert_row(row):
@@ -402,13 +464,13 @@ if df is not None and not df.empty:
                             center_lat = df_temp[df_temp[well_col] == selected_well]['lat'].values[0]
                             center_lon = df_temp[df_temp[well_col] == selected_well]['lon'].values[0]
                             
-                            # بناء الخرائط
                             m1 = build_map(
                                 center_lat=center_lat, center_lon=center_lon, zoom_start=12,
                                 df=df_temp, selected_well=selected_well, search_radius=search_radius_m,
                                 polygon_points=polygon_points, transformer_global=transformer_global,
                                 unit=distance_unit, zoom_mode=False,
-                                well_col=well_col, x_col=x_col, y_col=y_col, epsg_col=epsg_col
+                                well_col=well_col, x_col=x_col, y_col=y_col, epsg_col=epsg_col,
+                                hover_cols=hover_cols
                             )
                             
                             nearby_wells = df_temp[(df_temp['distance'] <= search_radius_m) & (df_temp[well_col] != selected_well)].copy()
@@ -422,10 +484,10 @@ if df is not None and not df.empty:
                                     df=nearby_wells, selected_well=selected_well, search_radius=search_radius_m,
                                     polygon_points=polygon_points, transformer_global=transformer_global,
                                     unit=distance_unit, zoom_mode=True,
-                                    well_col=well_col, x_col=x_col, y_col=y_col, epsg_col=epsg_col
+                                    well_col=well_col, x_col=x_col, y_col=y_col, epsg_col=epsg_col,
+                                    hover_cols=hover_cols
                                 )
                             
-                            # تخزين كل النتائج في Session State
                             st.session_state.search_data = {
                                 'df_temp': df_temp,
                                 'nearby_df': nearby_df,
@@ -439,22 +501,20 @@ if df is not None and not df.empty:
                                 'well_col': well_col,
                                 'x_col': x_col,
                                 'y_col': y_col,
-                                'source_epsg': source_epsg,
-                                'polygon_points': polygon_points,
-                                'epsg_col': epsg_col
+                                'hover_cols': hover_cols
                             }
                             st.session_state.search_active = True
                         else:
-                            st.error("Conversion failed for all wells. Check CRS or Y Offset.")
+                            st.error("Conversion failed.")
                     else:
-                        st.error("Invalid global CRS.")
+                        st.error("Invalid CRS.")
                 else:
-                    st.error("Selected well not found!")
+                    st.error("Well not found!")
             else:
-                st.error("No valid numeric coordinates found.")
+                st.error("No valid coordinates.")
         
         # ================================================================
-        # 2. عرض النتائج (إما من البحث الجديد أو من التخزين المؤقت)
+        # 2. DISPLAY RESULTS (CACHED)
         # ================================================================
         if st.session_state.search_active and st.session_state.search_data is not None:
             data = st.session_state.search_data
@@ -471,7 +531,7 @@ if df is not None and not df.empty:
             x_col = data['x_col']
             y_col = data['y_col']
             
-            # عرض الإحصائيات
+            # Stats
             st.markdown(f"### 🎯 Results for Well **{selected_well}**")
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -484,65 +544,63 @@ if df is not None and not df.empty:
             with col3:
                 if not nearby_df.empty:
                     closest_dist = format_distance(nearby_df.iloc[0]['distance'], distance_unit)
-                    st.metric("📏 Closest Distance", f"{closest_dist:.3f} {unit_label}")
+                    st.metric("📏 Closest Dist", f"{closest_dist:.2f} {unit_label}")
                 else:
-                    st.metric("📏 Closest Distance", "-")
+                    st.metric("📏 Closest Dist", "-")
             
             st.markdown("---")
             
-            # الجدول
-            st.markdown("#### 📋 Nearby Wells Table")
+            # Table (تقليل الارتفاع قليلاً)
+            st.markdown("#### 📋 Nearby Wells")
             if not nearby_df.empty:
                 display_cols = [well_col, x_col, y_col, f'Distance ({unit_label})']
                 display_cols.extend(extra_cols)
                 st.dataframe(
-                    nearby_df[display_cols].style.format({f'Distance ({unit_label})': '{:.3f}'}),
+                    nearby_df[display_cols].style.format({f'Distance ({unit_label})': '{:.2f}'}),
                     use_container_width=True,
-                    height=350
+                    height=250
                 )
             else:
-                st.warning("⚠️ No other wells found within the specified radius.")
+                st.warning("⚠️ No other wells found.")
             
-            # الخريطة العامة
-            st.markdown("#### 🗺️ General Map (All Wells)")
-            st.caption("🖱️ Hover wells for details. 🧭 Use ruler (top-right) to measure. ☰ Layers to change style.")
-            folium_static(m1, width=1200, height=550)
+            # Map 1 (تقليل الارتفاع لتقليل التمرير)
+            st.markdown("#### 🗺️ General Map")
+            st.caption("🖱️ Hover for details | 🧭 Ruler | ☰ Layers")
+            folium_static(m1, width=1200, height=450)
             
-            # خريطة التكبير
-            st.markdown("#### 🔍 Zoom View (Selected + Nearby Wells)")
+            # Map 2
+            st.markdown("#### 🔍 Zoom View")
             if m2 is not None:
-                folium_static(m2, width=1200, height=500)
+                folium_static(m2, width=1200, height=400)
             else:
-                st.info("ℹ️ No nearby wells to zoom in on.")
+                st.info("ℹ️ No nearby wells to zoom.")
             
-            # أزرار التحميل
+            # Download
             st.markdown("---")
             col_dl1, col_dl2 = st.columns(2)
             with col_dl1:
                 if not nearby_df.empty:
                     csv = nearby_df[[well_col, x_col, y_col, f'Distance ({unit_label})'] + extra_cols].to_csv(index=False).encode('utf-8')
-                    st.download_button("📥 Download Results CSV", data=csv, file_name='nearest_wells.csv', mime='text/csv', use_container_width=True)
+                    st.download_button("📥 Download CSV", data=csv, file_name='nearest_wells.csv', mime='text/csv', use_container_width=True)
             with col_dl2:
                 html_path = tempfile.NamedTemporaryFile(delete=False, suffix='.html').name
                 m1.save(html_path)
                 with open(html_path, 'r', encoding='utf-8') as f:
                     html_data = f.read()
-                st.download_button("🗺️ Export Map as HTML", data=html_data, file_name='wells_map.html', mime='text/html', use_container_width=True)
+                st.download_button("🗺️ Export HTML", data=html_data, file_name='wells_map.html', mime='text/html', use_container_width=True)
                 try:
                     os.unlink(html_path)
                 except:
                     pass
         else:
             if not search_clicked:
-                st.info("👈 Select a well and settings from the sidebar, then click 'Find Nearby Wells'.")
+                st.info("👈 Select settings and click 'Find Nearby Wells'.")
     
     # ================================================================
-    # ==================== TAB 2: DATA MANAGEMENT (WITH SAVE BUTTON) ====================
+    # TAB 2: DATA MANAGEMENT
     # ================================================================
     with tab2:
-        st.markdown("### 📊 All Wells Data (Editable)")
-        st.caption("✏️ Edit cells freely below. Click **'💾 Save Changes'** to apply all modifications at once.")
-        
+        st.markdown("### 📊 All Wells Data")
         if st.session_state.df is not None:
             with st.form(key="data_edit_form"):
                 edited_df = st.data_editor(
@@ -552,26 +610,25 @@ if df is not None and not df.empty:
                     height=500,
                     column_config={
                         "Well": st.column_config.TextColumn("Well Name", required=True),
-                        "x": st.column_config.NumberColumn("X Coordinate", format="%.2f"),
-                        "y": st.column_config.NumberColumn("Y Coordinate", format="%.2f"),
+                        "x": st.column_config.NumberColumn("X", format="%.2f"),
+                        "y": st.column_config.NumberColumn("Y", format="%.2f"),
                     }
                 )
-                submitted = st.form_submit_button("💾 Save Changes to Memory", use_container_width=True, type="primary")
+                submitted = st.form_submit_button("💾 Save Changes", use_container_width=True, type="primary")
             
             if submitted:
                 st.session_state.df = edited_df
-                st.session_state.search_active = False  # نلغي نتائج البحث لأن البيانات تغيرت
-                st.success(f"✅ Data saved successfully! Total wells: {len(edited_df)}")
+                st.session_state.search_active = False
+                st.success(f"✅ Saved! Total: {len(edited_df)}")
                 st.rerun()
             
-            st.info(f"📌 Current total wells in memory: {len(st.session_state.df)}")
             csv_full = st.session_state.df.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Full Dataset as CSV", data=csv_full, file_name='all_wells_data.csv', mime='text/csv')
+            st.download_button("📥 Download Full Dataset", data=csv_full, file_name='all_wells_data.csv', mime='text/csv')
         else:
-            st.warning("No data loaded. Please upload a file in the sidebar.")
+            st.warning("No data loaded.")
 
 else:
-    st.warning("Please upload a valid file in the sidebar.")
+    st.warning("Please upload a valid file.")
 
 st.markdown("---")
-st.caption("🔒 Local app. Data never leaves your machine. | 🖱️ Hover wells for details. | 🧭 Ruler + 4 map styles in top-right corner.")
+st.caption("🔒 Local | 🖱️ Hover for details | 🧭 Ruler | 📦 Shapefile support")
